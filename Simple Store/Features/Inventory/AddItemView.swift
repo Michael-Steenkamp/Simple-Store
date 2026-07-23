@@ -133,6 +133,7 @@ struct AddItemView: View {
             }
             .scrollDismissesKeyboard(.interactively)
         }
+        .dismissKeyboardOnTap()
         .overlay(
             VStack {
                 Spacer()
