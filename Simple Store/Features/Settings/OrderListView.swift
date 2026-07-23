@@ -17,6 +17,8 @@ struct OrderListView: View {
     @State private var transactionToRevert: Transaction?
     @State private var isShowingRevertAlert = false
     
+    @AppStorage("hasDiscoveredSwipe") private var hasDiscoveredSwipe = false
+    
     var filteredTransactions: [Transaction] {
         if searchText.isEmpty {
             return allTransactions
@@ -30,6 +32,23 @@ struct OrderListView: View {
     }
     
     var body: some View {
+        
+        if !hasDiscoveredSwipe {
+            HStack {
+                Image(systemName: "hand.draw.fill")
+                Text("Swipe items left or right for quick actions.")
+                    .font(.footnote)
+                Spacer()
+                Button(action: { withAnimation { hasDiscoveredSwipe = true } }) {
+                    Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                }
+            }
+            .padding()
+            .background(Color.blue.opacity(0.1))
+            .cornerRadius(8)
+            .padding(.horizontal)
+        }
+            
         List {
             if filteredTransactions.isEmpty {
                 Text(searchText.isEmpty ? "No orders found." : "No results for '\(searchText)'")
@@ -55,6 +74,20 @@ struct OrderListView: View {
                             isShowingRevertAlert = true
                         } label: {
                             Label("Revert", systemImage: "arrow.uturn.backward")
+                        }
+                    }
+                    .contextMenu {
+                        Button {
+                            shareReceipt(for: transaction)
+                        } label: {
+                            Label("Share Receipt", systemImage: "square.and.arrow.up")
+                        }
+                        
+                        Button(role: .destructive) {
+                            transactionToRevert = transaction
+                            isShowingRevertAlert = true
+                        } label: {
+                            Label("Revert Order", systemImage: "arrow.uturn.backward")
                         }
                     }
                 }

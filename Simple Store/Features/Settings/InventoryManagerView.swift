@@ -1,8 +1,13 @@
 //
 //  InventoryManagerView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-20.
+//
+
+//
+//  InventoryManagerView.swift
+//  Simple Inventory
 //
 
 import SwiftUI
@@ -15,15 +20,16 @@ struct InventoryManagerView: View {
     @State private var searchText = ""
     @State private var isSearchFocused = false
     @State private var isShowingScanner = false
-    @State private var selectedTab = 0
+    
+    var activeItems: [StoreItem] {
+        allItems.filter { $0.isActive }
+    }
     
     var filteredItems: [StoreItem] {
-        let items = allItems.filter { selectedTab == 0 ? $0.isActive : !$0.isActive }
-        
         if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-            return items
+            return activeItems
         } else {
-            return items.filter { item in
+            return activeItems.filter { item in
                 let nameMatch = item.name.localizedCaseInsensitiveContains(searchText)
                 let barcodeMatch = item.barcode?.localizedCaseInsensitiveContains(searchText) ?? false
                 return nameMatch || barcodeMatch
@@ -33,19 +39,11 @@ struct InventoryManagerView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            Picker("View Mode", selection: $selectedTab.animation(.easeInOut)) {
-                Text("Active Stock").tag(0)
-                Text("Archived").tag(1)
-            }
-            .pickerStyle(.segmented)
-            .padding()
-            .background(Color(UIColor.systemBackground))
-            
             if filteredItems.isEmpty {
                 ContentUnavailableView(
-                    selectedTab == 0 ? "No Active Items" : "No Archived Items",
-                    systemImage: selectedTab == 0 ? "shippingbox" : "archivebox",
-                    description: Text(selectedTab == 0 ? "Your active inventory will appear here." : "Deleted items can be restored from here.")
+                    "No Active Items",
+                    systemImage: "shippingbox",
+                    description: Text("Your active inventory will appear here.")
                 )
             } else {
                 List {
@@ -54,27 +52,26 @@ struct InventoryManagerView: View {
                             InventoryRowView(item: item)
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            if !item.isActive {
-                                Button {
-                                    withAnimation {
-                                        item.isActive = true
-                                        item.updatedAt = Date()
-                                        try? modelContext.save()
-                                    }
-                                } label: {
-                                    Label("Restore", systemImage: "arrow.uturn.backward")
+                            Button(role: .destructive) {
+                                withAnimation {
+                                    item.isActive = false
+                                    item.updatedAt = Date()
+                                    try? modelContext.save()
                                 }
-                                .tint(.indigo)
-                            } else {
-                                Button(role: .destructive) {
-                                    withAnimation {
-                                        item.isActive = false
-                                        item.updatedAt = Date()
-                                        try? modelContext.save()
-                                    }
-                                } label: {
-                                    Label("Archive", systemImage: "archivebox")
+                            } label: {
+                                Label("Archive", systemImage: "archivebox")
+                            }
+                        }
+                        // Apple Best Practice: Duplicate swipe action in context menu
+                        .contextMenu {
+                            Button(role: .destructive) {
+                                withAnimation {
+                                    item.isActive = false
+                                    item.updatedAt = Date()
+                                    try? modelContext.save()
                                 }
+                            } label: {
+                                Label("Archive Item", systemImage: "archivebox")
                             }
                         }
                     }
@@ -102,8 +99,14 @@ struct InventoryManagerView: View {
         .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search by name or barcode...")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                NavigationLink(destination: AddItemView()) {
-                    Image(systemName: "plus")
+                HStack(spacing: 16) {
+                    NavigationLink(destination: ArchivedInventoryView()) {
+                        Image(systemName: "archivebox")
+                    }
+                    
+                    NavigationLink(destination: AddItemView()) {
+                        Image(systemName: "plus")
+                    }
                 }
             }
         }
@@ -113,15 +116,24 @@ struct InventoryManagerView: View {
     }
 }
 
-// InventoryRowView remains unchanged...
+// MARK: - List Row Component
 struct InventoryRowView: View {
     let item: StoreItem
     var body: some View {
         HStack(spacing: 16) {
             if let data = item.imageData, let uiImage = UIImage(data: data) {
-                Image(uiImage: uiImage).resizable().scaledToFill().frame(width: 50, height: 50).clipShape(RoundedRectangle(cornerRadius: 8)).grayscale(item.isActive ? 0 : 0.99).opacity(item.isActive ? 1.0 : 0.6)
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 50, height: 50)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .grayscale(item.isActive ? 0 : 0.99)
+                    .opacity(item.isActive ? 1.0 : 0.6)
             } else {
-                RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.2)).frame(width: 50, height: 50).overlay(Image(systemName: "photo").foregroundColor(.gray))
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(Color.gray.opacity(0.2))
+                    .frame(width: 50, height: 50)
+                    .overlay(Image(systemName: "photo").foregroundColor(.gray))
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(item.name).font(.headline).lineLimit(2).foregroundColor(item.isActive ? .primary : .secondary)
@@ -130,11 +142,88 @@ struct InventoryRowView: View {
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
                 Text(item.salesPrice, format: .currency(code: "CAD")).fontWeight(.semibold).foregroundColor(item.isActive ? .primary : .secondary)
-                if !item.isActive { Text("Archived").font(.caption).foregroundColor(.red).fontWeight(.bold)
-                } else if item.stockCount <= 0 { Text("Out of Stock").font(.caption).foregroundColor(.red).fontWeight(.medium)
-                } else { Text("\(item.stockCount) in stock").font(.caption).foregroundColor(.secondary) }
+                if !item.isActive {
+                    Text("Archived").font(.caption).foregroundColor(.red).fontWeight(.bold)
+                } else if item.stockCount <= 0 {
+                    Text("Out of Stock").font(.caption).foregroundColor(.red).fontWeight(.medium)
+                } else {
+                    Text("\(item.stockCount) in stock").font(.caption).foregroundColor(.secondary)
+                }
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+// MARK: - Archived Inventory View
+struct ArchivedInventoryView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
+    
+    var archivedItems: [StoreItem] {
+        allItems.filter { !$0.isActive }
+    }
+    
+    var body: some View {
+        List {
+            if archivedItems.isEmpty {
+                Text("No archived items.")
+                    .foregroundColor(.secondary)
+                    .italic()
+                    .listRowBackground(Color.clear)
+            } else {
+                ForEach(archivedItems) { item in
+                    InventoryRowView(item: item)
+                        .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                            Button {
+                                withAnimation {
+                                    item.isActive = true
+                                    item.updatedAt = Date()
+                                    try? modelContext.save()
+                                }
+                            } label: {
+                                Label("Restore", systemImage: "arrow.uturn.backward")
+                            }
+                            .tint(.green)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                withAnimation {
+                                    permanentlyDelete(item)
+                                }
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+                        // Apple Best Practice: Context Menu for Archived Items
+                        .contextMenu {
+                            Button {
+                                withAnimation {
+                                    item.isActive = true
+                                    item.updatedAt = Date()
+                                    try? modelContext.save()
+                                }
+                            } label: {
+                                Label("Restore Item", systemImage: "arrow.uturn.backward")
+                            }
+                            
+                            Button(role: .destructive) {
+                                withAnimation {
+                                    permanentlyDelete(item)
+                                }
+                            } label: {
+                                Label("Delete Forever", systemImage: "trash")
+                            }
+                        }
+                }
+            }
+        }
+        .navigationTitle("Archived Inventory")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    private func permanentlyDelete(_ item: StoreItem) {
+        modelContext.delete(item)
+        try? modelContext.save()
     }
 }

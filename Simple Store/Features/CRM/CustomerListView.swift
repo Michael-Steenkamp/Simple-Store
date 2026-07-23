@@ -60,12 +60,21 @@ struct CustomerListView: View {
                         }
                         .tint(.red)
                     }
+                    // Apple Best Practice: Duplicate swipe action in context menu
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            withAnimation {
+                                archiveCustomer(customer)
+                            }
+                        } label: {
+                            Label("Archive Customer", systemImage: "archivebox")
+                        }
+                    }
                 }
             }
         }
         .navigationTitle("Customers")
         .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search name...")
-        // Adding tactile feedback when a customer is archived
         .sensoryFeedback(.impact(weight: .medium), trigger: activeCustomers.count)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {

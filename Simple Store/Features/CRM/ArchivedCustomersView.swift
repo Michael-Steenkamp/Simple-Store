@@ -11,7 +11,6 @@ import SwiftData
 struct ArchivedCustomersView: View {
     @Environment(\.modelContext) private var modelContext
     
-
     @Query(sort: \Customer.lastName) private var allCustomers: [Customer]
     
     var archivedCustomers: [Customer] {
@@ -40,7 +39,9 @@ struct ArchivedCustomersView: View {
                     .padding(.vertical, 4)
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
                         Button {
-                            restoreCustomer(customer)
+                            withAnimation {
+                                restoreCustomer(customer)
+                            }
                         } label: {
                             Label("Restore", systemImage: "arrow.uturn.backward")
                         }
@@ -48,7 +49,27 @@ struct ArchivedCustomersView: View {
                     }
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
-                            permanentlyDelete(customer)
+                            withAnimation {
+                                permanentlyDelete(customer)
+                            }
+                        } label: {
+                            Label("Delete Forever", systemImage: "trash")
+                        }
+                    }
+                    // Apple Best Practice: Context Menu for Archived Items
+                    .contextMenu {
+                        Button {
+                            withAnimation {
+                                restoreCustomer(customer)
+                            }
+                        } label: {
+                            Label("Restore Customer", systemImage: "arrow.uturn.backward")
+                        }
+                        
+                        Button(role: .destructive) {
+                            withAnimation {
+                                permanentlyDelete(customer)
+                            }
                         } label: {
                             Label("Delete Forever", systemImage: "trash")
                         }
@@ -67,7 +88,6 @@ struct ArchivedCustomersView: View {
     }
     
     private func permanentlyDelete(_ customer: Customer) {
-        // Warning: This will permanently orphan their past transactions
         modelContext.delete(customer)
         try? modelContext.save()
     }
