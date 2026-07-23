@@ -7,10 +7,10 @@
 
 import SwiftUI
 import SwiftData
+import PhotosUI
 
 struct SettingsTabView: View {
-    // Replaced binding with standard Environment dismiss
-    @Environment(\.dismiss) private var dismiss
+    @Binding var isPresented: Bool
     
     @AppStorage("storeName") private var storeName: String = "Your Store Name"
     @State private var logoData: Data? = UserDefaults.standard.data(forKey: "storeLogo")
@@ -85,13 +85,34 @@ struct SettingsTabView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(true) // Hide default back to use custom one below
+        // MARK: - Right Edge Hotspot (Swipe left to return to Store)
+        // Scoped HERE so it doesn't bleed into sub-views!
+        .overlay(alignment: .trailing) {
+            Color.clear
+                .frame(width: 30) // Only intercepts touches on the very right edge
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 20)
+                        .onEnded { value in
+                            // Ensure it's a confident horizontal swipe left
+                            if value.translation.width < -40 && abs(value.translation.height) < 50 {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    isPresented = false
+                                }
+                            }
+                        }
+                )
+        }
         .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: { dismiss() }) {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(action: {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        isPresented = false
+                    }
+                }) {
                     HStack(spacing: 4) {
-                        Image(systemName: "chevron.left")
                         Text("Store")
+                        Image(systemName: "chevron.right")
                     }
                 }
             }

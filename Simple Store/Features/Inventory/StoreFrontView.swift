@@ -61,121 +61,161 @@ struct StorefrontView: View {
     let columns = Array(repeating: GridItem(.flexible(), spacing: 12), count: 3)
     
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                
-                FilterBarView(
-                    searchText: $searchText,
-                    showInStockOnly: $showInStockOnly,
-                    showOutOfStockOnly: $showOutOfStockOnly,
-                    selectedFilterTags: $selectedFilterTags,
-                    allTags: allTags,
-                    isFilterActive: isFilterActive
-                )
-                
-                ScrollView {
-                    if filteredItems.isEmpty {
-                        emptyStateView
-                    } else {
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(filteredItems) { item in
-                                NavigationLink(destination: ItemProfileView(item: item)) {
-                                    ItemCardView(item: item)
+        ZStack {
+            NavigationStack {
+                VStack(spacing: 0) {
+                    
+                    FilterBarView(
+                        searchText: $searchText,
+                        showInStockOnly: $showInStockOnly,
+                        showOutOfStockOnly: $showOutOfStockOnly,
+                        selectedFilterTags: $selectedFilterTags,
+                        allTags: allTags,
+                        isFilterActive: isFilterActive
+                    )
+                    
+                    ScrollView {
+                        if filteredItems.isEmpty {
+                            emptyStateView
+                        } else {
+                            LazyVGrid(columns: columns, spacing: 16) {
+                                ForEach(filteredItems) { item in
+                                    NavigationLink(destination: ItemProfileView(item: item)) {
+                                        ItemCardView(item: item)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
+                            .padding(.horizontal, 12)
+                            .padding(.top, 16)
+                            .padding(.bottom, cartManager.totalItemCount > 0 ? 100 : 20)
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.top, 16)
-                        .padding(.bottom, cartManager.totalItemCount > 0 ? 100 : 20)
                     }
-                }
-                .overlay(alignment: .bottom) {
-                    if cartManager.totalItemCount > 0 {
-                        Button(action: {
-                            isShowingCheckout = true
-                        }) {
-                            HStack(spacing: 12) {
-                                ZStack {
-                                    Image(systemName: "cart.fill")
-                                        .font(.title2)
+                    .overlay(alignment: .bottom) {
+                        if cartManager.totalItemCount > 0 {
+                            Button(action: {
+                                isShowingCheckout = true
+                            }) {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        Image(systemName: "cart.fill")
+                                            .font(.title2)
+                                        
+                                        Text("\(cartManager.totalItemCount)")
+                                            .font(.caption2)
+                                            .fontWeight(.bold)
+                                            .foregroundColor(.blue)
+                                            .frame(width: 18, height: 18)
+                                            .background(Color.white)
+                                            .clipShape(Circle())
+                                            .offset(x: 12, y: -10)
+                                    }
                                     
-                                    Text("\(cartManager.totalItemCount)")
-                                        .font(.caption2)
+                                    Text("Checkout • \(cartManager.totalAmount, format: .currency(code: "CAD"))")
                                         .fontWeight(.bold)
-                                        .foregroundColor(.blue)
-                                        .frame(width: 18, height: 18)
-                                        .background(Color.white)
-                                        .clipShape(Circle())
-                                        .offset(x: 12, y: -10)
                                 }
-                                
-                                Text("Checkout • \(cartManager.totalAmount, format: .currency(code: "CAD"))")
-                                    .fontWeight(.bold)
+                                .padding(.horizontal, 20)
+                                .padding(.vertical, 16)
+                                .background(Color.blue)
+                                .foregroundColor(.white)
+                                .clipShape(Capsule())
+                                .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
                             }
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 16)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .clipShape(Capsule())
-                            .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
+                            .padding(.bottom, 20)
+                            .transition(.move(edge: .bottom).combined(with: .opacity))
+                            .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
+                            .sensoryFeedback(.success, trigger: cartManager.totalItemCount)
                         }
-                        .padding(.bottom, 20)
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
-                        // QoL: Adds a satisfying physical click when items hit the cart
-                        .sensoryFeedback(.success, trigger: cartManager.totalItemCount)
                     }
                 }
-            }
-            .overlay(alignment: .bottomTrailing) {
-                Button(action: { isShowingScanner = true }) {
-                    Image(systemName: "barcode.viewfinder")
-                        .font(.title)
-                        .foregroundColor(.primary)
-                        .padding(18)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Circle())
-                        .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+                .overlay(alignment: .bottomTrailing) {
+                    Button(action: { isShowingScanner = true }) {
+                        Image(systemName: "barcode.viewfinder")
+                            .font(.title)
+                            .foregroundColor(.primary)
+                            .padding(18)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Circle())
+                            .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
+                    }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, cartManager.totalItemCount > 0 ? 100 : 20)
+                    .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
+                    .sensoryFeedback(.selection, trigger: isShowingScanner)
                 }
-                .padding(.trailing, 20)
-                .padding(.bottom, cartManager.totalItemCount > 0 ? 100 : 20)
-                .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
-                .sensoryFeedback(.selection, trigger: isShowingScanner)
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search name or barcode...")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: { navigateToSettings = true }) {
-                        Image(systemName: "gearshape.fill")
+                .navigationBarTitleDisplayMode(.inline)
+                .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search name or barcode...")
+                .toolbar {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                navigateToSettings = true
+                            }
+                        }) {
+                            Image(systemName: "gearshape.fill")
+                        }
+                    }
+                    
+                    ToolbarItem(placement: .principal) {
+                        Text(storeName)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                    }
+                    
+                    ToolbarItem(placement: .primaryAction) {
+                        Button(action: { navigateToAddItem = true }) {
+                            Image(systemName: "plus")
+                        }
                     }
                 }
-                
-                ToolbarItem(placement: .principal) {
-                    Text(storeName)
-                        .font(.headline)
-                        .foregroundColor(.primary)
+                .sheet(isPresented: $isShowingCheckout) {
+                    CartCheckoutView()
                 }
-                
-                ToolbarItem(placement: .primaryAction) {
-                    Button(action: { navigateToAddItem = true }) {
-                        Image(systemName: "plus")
-                    }
+                .sheet(isPresented: $isShowingScanner) {
+                    BarcodeScannerView(scannedCode: $searchText)
+                }
+                .navigationDestination(isPresented: $navigateToAddItem) {
+                    AddItemView()
+                }
+                // MARK: - Left Edge Hotspot (Swipe to Settings)
+                .overlay(alignment: .leading) {
+                    Color.clear
+                        .frame(width: 30)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 20)
+                                .onEnded { value in
+                                    if value.translation.width > 40 && abs(value.translation.height) < 50 {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                            navigateToSettings = true
+                                        }
+                                    }
+                                }
+                        )
+                }
+                // MARK: - Right Edge Hotspot (Swipe to Add Item)
+                .overlay(alignment: .trailing) {
+                    Color.clear
+                        .frame(width: 30)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 20)
+                                .onEnded { value in
+                                    if value.translation.width < -40 && abs(value.translation.height) < 50 {
+                                        navigateToAddItem = true
+                                    }
+                                }
+                        )
                 }
             }
-            .sheet(isPresented: $isShowingCheckout) {
-                CartCheckoutView()
-            }
-            .sheet(isPresented: $isShowingScanner) {
-                BarcodeScannerView(scannedCode: $searchText)
-            }
-            // Use native navigation destinations for pushed views
-            .navigationDestination(isPresented: $navigateToAddItem) {
-                AddItemView()
-            }
-            .navigationDestination(isPresented: $navigateToSettings) {
-                SettingsTabView()
+            
+            // MARK: - Custom Settings Transition Layer
+            if navigateToSettings {
+                NavigationStack {
+                    SettingsTabView(isPresented: $navigateToSettings)
+                }
+                .transition(.move(edge: .leading))
+                .zIndex(2)
             }
         }
     }
