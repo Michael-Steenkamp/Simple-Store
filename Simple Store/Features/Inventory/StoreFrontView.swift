@@ -1,6 +1,6 @@
 //
 //  StoreFrontView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-18.
 //
@@ -80,10 +80,30 @@ struct StorefrontView: View {
                         } else {
                             LazyVGrid(columns: columns, spacing: 16) {
                                 ForEach(filteredItems) { item in
-                                    NavigationLink(destination: ItemProfileView(item: item)) {
-                                        ItemCardView(item: item)
+                                    let isInCart = cartManager.items.keys.contains(where: { $0.id == item.id })
+                                    
+                                    Group {
+                                        if isInCart {
+                                            // Standard view logic without navigating to edit if in cart
+                                            ItemCardView(item: item)
+                                        } else {
+                                            NavigationLink(destination: ItemProfileView(item: item)) {
+                                                ItemCardView(item: item)
+                                            }
+                                        }
                                     }
                                     .buttonStyle(.plain)
+                                    // MARK: - Instant Quick Add Mechanic
+                                    .simultaneousGesture(
+                                        LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                                            let currentQty = cartManager.items[item] ?? 0
+                                            if currentQty < item.stockCount {
+                                                cartManager.items[item] = currentQty + 1
+                                                let generator = UIImpactFeedbackGenerator(style: .heavy)
+                                                generator.impactOccurred()
+                                            }
+                                        }
+                                    )
                                 }
                             }
                             .padding(.horizontal, 12)
@@ -177,7 +197,6 @@ struct StorefrontView: View {
                 .navigationDestination(isPresented: $navigateToAddItem) {
                     AddItemView()
                 }
-                // MARK: - Left Edge Hotspot (Swipe to Settings)
                 .overlay(alignment: .leading) {
                     Color.clear
                         .frame(width: 30)
@@ -193,7 +212,6 @@ struct StorefrontView: View {
                                 }
                         )
                 }
-                // MARK: - Right Edge Hotspot (Swipe to Add Item)
                 .overlay(alignment: .trailing) {
                     Color.clear
                         .frame(width: 30)
@@ -209,7 +227,6 @@ struct StorefrontView: View {
                 }
             }
             
-            // MARK: - Custom Settings Transition Layer
             if navigateToSettings {
                 NavigationStack {
                     SettingsTabView(isPresented: $navigateToSettings)

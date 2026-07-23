@@ -31,8 +31,8 @@ struct SimpleStoreApp: App {
     
     var body: some Scene {
         WindowGroup {
-//            SplashScreenView()
-            StorefrontView()
+            SplashScreenView()
+//            StorefrontView()
         }
         .modelContainer(sharedContainer)
         .environment(CartManager())

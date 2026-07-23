@@ -64,7 +64,6 @@ struct ItemCardView: View {
             .frame(height: 55, alignment: .top)
             .background(Color(UIColor.tertiarySystemGroupedBackground))
         }
-        .dismissKeyboardOnTap()
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: Color.black.opacity(0.06), radius: 5, x: 0, y: 3)
         .overlay(

@@ -1,6 +1,6 @@
 //
 //  AddItemView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-18.
 //
@@ -30,7 +30,7 @@ struct AddItemView: View {
     @State private var imageSource: UIImagePickerController.SourceType = .photoLibrary
     
     enum FocusField: Hashable {
-        case name, desc, price, cost, barcode, stock
+        case name, desc, price, cost, barcode
     }
     @FocusState private var focusedField: FocusField?
     
@@ -39,146 +39,193 @@ struct AddItemView: View {
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            ScrollView {
-                VStack(spacing: 24) {
-                    
-                    ItemPhotoSelectionButton(imageData: imageData) {
-                        isShowingPhotoOptions = true
-                    }
-                    .padding(.top, 20)
-                    
+        NavigationStack {
+            Form {
+                // MARK: - Product Image
+                Section {
                     VStack(spacing: 16) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Tags")
-                                    .font(.caption)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Button(action: { isShowingTagManager = true }) {
-                                    Image(systemName: "tag.circle.fill")
-                                        .font(.title3)
-                                        .foregroundColor(.blue)
+                        Button(action: {
+                            isShowingPhotoOptions = true
+                        }) {
+                            VStack(spacing: 8) {
+                                if let data = imageData, let uiImage = UIImage(data: data) {
+                                    Image(uiImage: uiImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 120, height: 120)
+                                        .clipShape(Circle())
+                                        .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+                                } else {
+                                    ZStack {
+                                        Circle()
+                                            .fill(Color(UIColor.secondarySystemBackground))
+                                            .frame(width: 120, height: 120)
+                                        Image(systemName: "camera.macro")
+                                            .font(.system(size: 40))
+                                            .foregroundColor(Color(UIColor.systemGray3))
+                                    }
                                 }
+                                
+                                Text(imageData == nil ? "Add Product Photo" : "Change Photo")
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .background(Color(UIColor.secondarySystemFill))
+                                    .foregroundColor(.primary)
+                                    .clipShape(Capsule())
                             }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 10)
+                        .padding(.bottom, 10)
+                        
+                        TextField("Item Name", text: $name)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .multilineTextAlignment(.center)
+                            .padding(.bottom, 10)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                
+                // MARK: - Pricing & Stock
+                Section(
+                    header: Text("Pricing & Inventory"),
+                    footer: Text(salesPriceString.isEmpty ? "Sales price is required." : "")
+                        .foregroundColor(.red)
+                ) {
+                    HStack {
+                        Image(systemName: "tag")
+                            .foregroundColor(salesPriceString.isEmpty ? .red : .green)
+                            .frame(width: 24)
+                        Text("$").foregroundColor(.secondary)
+                        TextField("0.00 (Sales Price)", text: $salesPriceString)
+                            .keyboardType(.decimalPad)
+                            .focused($focusedField, equals: .price)
+                    }
+                    
+                    HStack {
+                        Image(systemName: "building.2")
+                            .foregroundColor(.gray)
+                            .frame(width: 24)
+                        Text("$").foregroundColor(.secondary)
+                        TextField("0.00 (Wholesale Cost)", text: $itemCostString)
+                            .keyboardType(.decimalPad)
+                            .focused($focusedField, equals: .cost)
+                    }
+                    
+                    Stepper(value: $stockCount, in: 0...9999) {
+                        HStack {
+                            Image(systemName: "shippingbox")
+                                .foregroundColor(.gray)
+                                .frame(width: 24)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("Stock").font(.caption2).foregroundColor(.secondary)
+                                Text("\(stockCount)").fontWeight(.semibold)
+                            }
+                        }
+                    }
+                }
+                
+                // MARK: - Organization
+                Section(header: Text("Organization & Identifiers")) {
+                    HStack {
+                        Image(systemName: "barcode")
+                            .foregroundColor(.gray)
+                            .frame(width: 24)
+                        
+                        TextField("Scan or type barcode...", text: $barcode)
+                            .focused($focusedField, equals: .barcode)
+                            .submitLabel(.done)
+                        
+                        Spacer()
+                        
+                        Button(action: {
+                            hideKeyboard()
+                            isShowingScanner = true
+                        }) {
+                            Image(systemName: "barcode.viewfinder")
+                                .font(.title3)
+                                .foregroundColor(.blue)
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                    
+                    Button(action: {
+                        hideKeyboard()
+                        isShowingTagManager = true
+                    }) {
+                        HStack {
+                            Image(systemName: "tag.circle")
+                                .foregroundColor(.gray)
+                                .frame(width: 24)
                             
                             if selectedTags.isEmpty {
-                                Text("None")
-                                    .font(.body)
-                                    .foregroundColor(.secondary)
-                                    .padding(.vertical, 8)
+                                Text("Assign Tags")
+                                    .foregroundColor(.primary)
                             } else {
-                                FormTagRow(tags: selectedTags)
+                                ScrollView(.horizontal, showsIndicators: false) {
+                                    HStack {
+                                        ForEach(selectedTags) { tag in
+                                            TagPillView(name: tag.name) // Use the standard shared component
+                                        }
+                                    }
+                                }
                             }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
                         }
-                        
-                        Divider()
-                        
-                        ModernTextField(title: "Item Name *", placeholder: "e.g. Premium Coffee Beans", text: $name)
-                            .focused($focusedField, equals: .name)
-                            .submitLabel(.next)
-                            .onSubmit { focusedField = .price }
-                        
-                        ModernTextField(title: "Notes (Optional)", placeholder: "Any specific details...", text: $desc)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.borderless) // Protects against the global tap-to-dismiss gesture
+                }
+                
+                // MARK: - Basic Details
+                Section(header: Text("Basic Details")) {
+                    
+                    HStack(alignment: .top) {
+                        Image(systemName: "text.alignleft")
+                            .foregroundColor(.gray)
+                            .frame(width: 24)
+                            .padding(.top, 4)
+                        TextField("Notes or description...", text: $desc, axis: .vertical)
+                            .lineLimit(2...5)
                             .focused($focusedField, equals: .desc)
-                            .submitLabel(.next)
-                            .onSubmit { focusedField = .barcode }
                     }
-                    .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .cornerRadius(16)
-                    
-                    VStack(spacing: 20) {
-                        HStack(spacing: 16) {
-                            ModernCurrencyField(title: "Sales Price *", text: $salesPriceString)
-                                .focused($focusedField, equals: .price)
-                            
-                            ModernCurrencyField(title: "Wholesale Cost", text: $itemCostString)
-                                .focused($focusedField, equals: .cost)
-                        }
-                        
-                        Divider()
-                        
-                        ItemStockStepper(stockCount: $stockCount, focusedField: $focusedField, equals: .stock)
-                    }
-                    .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .cornerRadius(16)
-                    
-                    VStack(spacing: 16) {
-                        HStack {
-                            ModernTextField(title: "Barcode", placeholder: "Scan or type...", text: $barcode)
-                                .focused($focusedField, equals: .barcode)
-                                .submitLabel(.done)
-                                .onSubmit { focusedField = nil }
-                            
-                            Button(action: { isShowingScanner = true }) {
-                                Image(systemName: "barcode.viewfinder")
-                                    .font(.title)
-                                    .foregroundColor(.white)
-                                    .frame(width: 53, height: 53)
-                                    .background(Color.blue)
-                                    .cornerRadius(12)
-                            }
-                            .padding(.top, 20)
-                        }
-                    }
-                    .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .cornerRadius(16)
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 100)
             }
-            .scrollDismissesKeyboard(.interactively)
-        }
-        .dismissKeyboardOnTap()
-        .overlay(
-            VStack {
-                Spacer()
-                Button(action: saveItem) {
-                    Text("Create Item")
-                        .font(.headline)
-                        .foregroundColor(.white)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(isFormValid ? Color.blue : Color.gray)
-                        .cornerRadius(16)
-                        .shadow(color: isFormValid ? Color.blue.opacity(0.3) : .clear, radius: 10, y: 5)
+            .dismissKeyboardOnTap()
+            .navigationTitle("New Item")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        saveItem()
+                    }
+                    .fontWeight(.bold)
+                    .disabled(!isFormValid)
                 }
-                .disabled(!isFormValid)
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
-                .background(
-                    LinearGradient(gradient: Gradient(colors: [Color(UIColor.systemBackground).opacity(0), Color(UIColor.systemBackground)]), startPoint: .top, endPoint: .bottom)
-                        .frame(height: 100)
-                        .offset(y: 10)
-                )
             }
-        )
-        .navigationTitle("New Item")
-        .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Add Photo", isPresented: $isShowingPhotoOptions, titleVisibility: .visible) {
-            Button("Take Photo") {
-                imageSource = .camera
-                isShowingImagePicker = true
+            .confirmationDialog("Add Photo", isPresented: $isShowingPhotoOptions, titleVisibility: .visible) {
+                Button("Take Photo") { imageSource = .camera; isShowingImagePicker = true }
+                Button("Choose from Library") { imageSource = .photoLibrary; isShowingImagePicker = true }
+                if imageData != nil { Button("Remove Photo", role: .destructive) { imageData = nil } }
+                Button("Cancel", role: .cancel) { }
             }
-            Button("Choose from Library") {
-                imageSource = .photoLibrary
-                isShowingImagePicker = true
+            .fullScreenCover(isPresented: $isShowingImagePicker) {
+                ImagePicker(sourceType: imageSource, selectedImage: $imageData).ignoresSafeArea()
             }
-            Button("Cancel", role: .cancel) { }
-        }
-        .fullScreenCover(isPresented: $isShowingImagePicker) {
-            ImagePicker(sourceType: imageSource, selectedImage: $imageData)
-                .ignoresSafeArea()
-        }
-        .sheet(isPresented: $isShowingScanner) {
-            BarcodeScannerView(scannedCode: $barcode)
-        }
-        .sheet(isPresented: $isShowingTagManager) {
-            TagManagerView(selectedTags: $selectedTags, isSelectionMode: true)
+            .sheet(isPresented: $isShowingScanner) {
+                BarcodeScannerView(scannedCode: $barcode)
+            }
+            .sheet(isPresented: $isShowingTagManager) {
+                NavigationStack {
+                    TagManagerView(selectedTags: $selectedTags, isSelectionMode: true)
+                }
+            }
         }
     }
     
@@ -188,17 +235,21 @@ struct AddItemView: View {
         
         let newItem = StoreItem(
             tags: selectedTags,
-            name: name,
-            desc: desc.isEmpty ? nil : desc,
+            name: name.trimmingCharacters(in: .whitespaces),
+            desc: desc.trimmingCharacters(in: .whitespaces).isEmpty ? nil : desc.trimmingCharacters(in: .whitespaces),
             stockCount: stockCount,
             salesPrice: finalPrice,
             itemCost: finalCost,
-            barcode: barcode.isEmpty ? nil : barcode,
+            barcode: barcode.trimmingCharacters(in: .whitespaces).isEmpty ? nil : barcode.trimmingCharacters(in: .whitespaces),
             imageData: imageData
         )
         
         modelContext.insert(newItem)
         try? modelContext.save()
+        
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+        
         dismiss()
     }
 }
