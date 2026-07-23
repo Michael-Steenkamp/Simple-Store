@@ -52,7 +52,9 @@ struct CustomerListView: View {
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                         Button(role: .destructive) {
-                            archiveCustomer(customer)
+                            withAnimation {
+                                archiveCustomer(customer)
+                            }
                         } label: {
                             Label("Archive", systemImage: "archivebox")
                         }
@@ -63,6 +65,8 @@ struct CustomerListView: View {
         }
         .navigationTitle("Customers")
         .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search name...")
+        // Adding tactile feedback when a customer is archived
+        .sensoryFeedback(.impact(weight: .medium), trigger: activeCustomers.count)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 16) {
@@ -79,16 +83,6 @@ struct CustomerListView: View {
         .sheet(isPresented: $isShowingAddSheet) {
             AddCustomerView()
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 40, coordinateSpace: .global)
-                .onEnded { value in
-                    let w = value.translation.width
-                    let h = value.translation.height
-                    if h > 120 && abs(w) < 50 {
-                        isSearchFocused = true
-                    }
-                }
-        )
     }
     
     private func archiveCustomer(_ customer: Customer) {

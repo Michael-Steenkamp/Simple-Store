@@ -33,7 +33,7 @@ struct InventoryManagerView: View {
     
     var body: some View {
         VStack(spacing: 0) {
-            Picker("View Mode", selection: $selectedTab) {
+            Picker("View Mode", selection: $selectedTab.animation(.easeInOut)) {
                 Text("Active Stock").tag(0)
                 Text("Archived").tag(1)
             }
@@ -56,18 +56,22 @@ struct InventoryManagerView: View {
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             if !item.isActive {
                                 Button {
-                                    item.isActive = true
-                                    item.updatedAt = Date()
-                                    try? modelContext.save()
+                                    withAnimation {
+                                        item.isActive = true
+                                        item.updatedAt = Date()
+                                        try? modelContext.save()
+                                    }
                                 } label: {
                                     Label("Restore", systemImage: "arrow.uturn.backward")
                                 }
                                 .tint(.indigo)
                             } else {
                                 Button(role: .destructive) {
-                                    item.isActive = false
-                                    item.updatedAt = Date()
-                                    try? modelContext.save()
+                                    withAnimation {
+                                        item.isActive = false
+                                        item.updatedAt = Date()
+                                        try? modelContext.save()
+                                    }
                                 } label: {
                                     Label("Archive", systemImage: "archivebox")
                                 }
@@ -76,6 +80,7 @@ struct InventoryManagerView: View {
                     }
                 }
                 .listStyle(.plain)
+                .sensoryFeedback(.impact(weight: .medium), trigger: filteredItems.count)
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -84,12 +89,13 @@ struct InventoryManagerView: View {
                     .font(.title)
                     .foregroundColor(.primary)
                     .padding(18)
-                    .background(.ultraThinMaterial) // Liquid Glass Effect
+                    .background(.ultraThinMaterial)
                     .clipShape(Circle())
                     .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
             }
             .padding(.trailing, 20)
             .padding(.bottom, 20)
+            .sensoryFeedback(.selection, trigger: isShowingScanner)
         }
         .navigationTitle("Inventory Manager")
         .navigationBarTitleDisplayMode(.inline)
@@ -104,20 +110,10 @@ struct InventoryManagerView: View {
         .sheet(isPresented: $isShowingScanner) {
             BarcodeScannerView(scannedCode: $searchText)
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 40, coordinateSpace: .global)
-                .onEnded { value in
-                    let w = value.translation.width
-                    let h = value.translation.height
-                    if h > 120 && abs(w) < 50 {
-                        isSearchFocused = true
-                    }
-                }
-        )
     }
 }
 
-// MARK: - List Row Component
+// InventoryRowView remains unchanged...
 struct InventoryRowView: View {
     let item: StoreItem
     var body: some View {

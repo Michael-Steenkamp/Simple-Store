@@ -2,8 +2,6 @@
 //  TagManagerView.swift
 //  Simple Inventory
 //
-//  Created by Michael Steenkamp on 2026-07-18.
-//
 
 import SwiftUI
 import SwiftData
@@ -35,7 +33,7 @@ struct TagManagerView: View {
     var body: some View {
         VStack(spacing: 0) {
             if !isSelectionMode {
-                Picker("Category", selection: $selectedTab) {
+                Picker("Category", selection: $selectedTab.animation(.easeInOut)) {
                     Text("Item Tags").tag(0)
                     Text("Customer Statuses").tag(1)
                 }
@@ -50,9 +48,9 @@ struct TagManagerView: View {
                     HStack {
                         TextField(selectedTab == 0 ? "e.g. Sale, New, Clearance..." : "e.g. Regular, VIP, Wholesale...", text: $newItemName)
                             .submitLabel(.done)
-                            .onSubmit(addItem)
+                            .onSubmit { withAnimation { addItem() } }
                         
-                        Button(action: addItem) {
+                        Button(action: { withAnimation { addItem() } }) {
                             Image(systemName: "plus.circle.fill")
                                 .font(.title2)
                                 .foregroundColor(newItemName.trimmingCharacters(in: .whitespaces).isEmpty ? .gray : .blue)
@@ -73,7 +71,7 @@ struct TagManagerView: View {
                             ForEach(allTags) { tag in
                                 HStack {
                                     if isSelectionMode {
-                                        Button(action: { toggleSelection(for: tag) }) {
+                                        Button(action: { withAnimation { toggleSelection(for: tag) } }) {
                                             Image(systemName: selectedTags.contains(tag) ? "checkmark.circle.fill" : "circle")
                                                 .foregroundColor(selectedTags.contains(tag) ? .blue : .gray)
                                                 .font(.title3)
@@ -121,6 +119,9 @@ struct TagManagerView: View {
                     }
                 }
             }
+            .sensoryFeedback(.success, trigger: allTags.count)
+            .sensoryFeedback(.success, trigger: allStatuses.count)
+            .sensoryFeedback(.selection, trigger: selectedTags.count)
         }
         .navigationTitle(isSelectionMode ? "Manage Tags" : "Tag & Status Manager")
         .navigationBarTitleDisplayMode(.inline)
@@ -133,13 +134,13 @@ struct TagManagerView: View {
         }
         .alert("Delete Tag", isPresented: $isShowingDeleteTagAlert, presenting: tagToDelete) { tag in
             Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) { deleteTag(tag) }
+            Button("Delete", role: .destructive) { withAnimation { deleteTag(tag) } }
         } message: { tag in
             Text("Are you sure you want to permanently delete '\(tag.name)'? This will remove it from all items.")
         }
         .alert("Delete Status", isPresented: $isShowingDeleteStatusAlert, presenting: statusToDelete) { status in
             Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) { deleteStatus(status) }
+            Button("Delete", role: .destructive) { withAnimation { deleteStatus(status) } }
         } message: { status in
             Text("Are you sure you want to delete '\(status.name)'? This will remove the status from any assigned customers.")
         }

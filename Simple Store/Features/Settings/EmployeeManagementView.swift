@@ -57,7 +57,9 @@ struct EmployeeManagementView: View {
                         .padding(.vertical, 4)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
-                                archiveEmployee(employee)
+                                withAnimation {
+                                    archiveEmployee(employee)
+                                }
                             } label: {
                                 Label("Archive", systemImage: "archivebox")
                             }
@@ -70,6 +72,8 @@ struct EmployeeManagementView: View {
                     }
                 }
                 .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search employees by name...")
+                // QoL: Tactile feedback on destructive actions
+                .sensoryFeedback(.impact(weight: .medium), trigger: activeEmployees.count)
             }
         }
         .navigationTitle("Employee Directory")
@@ -83,16 +87,6 @@ struct EmployeeManagementView: View {
         .sheet(isPresented: $isShowingAddSheet) {
             AddEmployeeView()
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 40, coordinateSpace: .global)
-                .onEnded { value in
-                    let w = value.translation.width
-                    let h = value.translation.height
-                    if h > 120 && abs(w) < 50 {
-                        isSearchFocused = true
-                    }
-                }
-        )
     }
     
     private func archiveEmployee(_ employee: Employee) {
@@ -113,11 +107,18 @@ struct AddEmployeeView: View {
                     TextField("Full Name", text: $name).textContentType(.name)
                 }
             }
-            .navigationTitle("New Employee").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("New Employee")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { let newEmployee = Employee(name: name); modelContext.insert(newEmployee); try? modelContext.save(); dismiss() }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Save") {
+                        let newEmployee = Employee(name: name)
+                        modelContext.insert(newEmployee)
+                        try? modelContext.save()
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
