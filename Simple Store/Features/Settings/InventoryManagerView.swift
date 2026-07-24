@@ -180,6 +180,9 @@ struct ArchivedInventoryView: View {
     @Environment(CartManager.self) private var cartManager
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
+    @State private var isShowingDeleteAlert = false
+    @State private var itemToDeleteAlert: StoreItem? = nil
+    
     var archivedItems: [StoreItem] {
         allItems.filter { !$0.isActive && !$0.name.hasSuffix("(Deleted)") }
     }
@@ -209,7 +212,8 @@ struct ArchivedInventoryView: View {
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 withAnimation {
-                                    permanentlyDelete(item)
+                                    itemToDeleteAlert = item
+                                    isShowingDeleteAlert = true
                                 }
                             } label: {
                                 Label("Delete", systemImage: "trash")
@@ -228,10 +232,11 @@ struct ArchivedInventoryView: View {
                             
                             Button(role: .destructive) {
                                 withAnimation {
-                                    permanentlyDelete(item)
+                                    itemToDeleteAlert = item
+                                    isShowingDeleteAlert = true
                                 }
                             } label: {
-                                Label("Delete Forever", systemImage: "trash")
+                                Label("Delete", systemImage: "trash")
                             }
                         }
                 }
@@ -239,6 +244,16 @@ struct ArchivedInventoryView: View {
         }
         .navigationTitle("Archived Inventory")
         .navigationBarTitleDisplayMode(.inline)
+        .alert("Permanently Delete", isPresented: $isShowingDeleteAlert, presenting: itemToDeleteAlert) { item in
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                withAnimation {
+                    permanentlyDelete(item)
+                }
+            }
+        } message: { item in
+            Text("Are you sure you want to permanently delete \(item.name)? This will strip its metadata. Transaction records will be preserved.")
+        }
     }
     
     private func permanentlyDelete(_ item: StoreItem) {
