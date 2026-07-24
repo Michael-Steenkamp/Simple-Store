@@ -1,6 +1,6 @@
 //
 //  ItemProfileView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-18.
 //
@@ -18,6 +18,11 @@ struct ItemProfileView: View {
     
     @State private var isShowingEditSheet = false
     @State private var isShowingCheckoutSheet = false
+    
+    // Determine if the item is currently in the active cart
+    var isItemInCart: Bool {
+        cartManager.items.keys.contains(where: { $0.id == item.id })
+    }
     
     var body: some View {
         ScrollView {
@@ -195,8 +200,11 @@ struct ItemProfileView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 16) {
-                    Button("Edit") {
-                        isShowingEditSheet = true
+                    // Conditionally hide the Edit button if the item is in the cart
+                    if !isItemInCart {
+                        Button("Edit") {
+                            isShowingEditSheet = true
+                        }
                     }
                     
                     if cartManager.totalItemCount > 0 {

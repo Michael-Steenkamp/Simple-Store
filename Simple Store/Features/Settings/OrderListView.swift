@@ -2,8 +2,6 @@
 //  OrderListView.swift
 //  Simple Inventory
 //
-//  Created by Michael Steenkamp on 2026-07-21.
-//
 
 import SwiftUI
 import SwiftData
@@ -19,6 +17,8 @@ struct OrderListView: View {
     @State private var transactionToRevert: Transaction?
     @State private var isShowingRevertAlert = false
     
+    @AppStorage("hasDiscoveredSwipe") private var hasDiscoveredSwipe = false
+    
     var filteredTransactions: [Transaction] {
         if searchText.isEmpty {
             return allTransactions
@@ -32,6 +32,23 @@ struct OrderListView: View {
     }
     
     var body: some View {
+        
+        if !hasDiscoveredSwipe {
+            HStack {
+                Image(systemName: "hand.draw.fill")
+                Text("Swipe items left or right for quick actions.")
+                    .font(.footnote)
+                Spacer()
+                Button(action: { withAnimation { hasDiscoveredSwipe = true } }) {
+                    Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                }
+            }
+            .padding()
+            .background(Color.blue.opacity(0.1))
+            .cornerRadius(8)
+            .padding(.horizontal)
+        }
+            
         List {
             if filteredTransactions.isEmpty {
                 Text(searchText.isEmpty ? "No orders found." : "No results for '\(searchText)'")
@@ -59,31 +76,39 @@ struct OrderListView: View {
                             Label("Revert", systemImage: "arrow.uturn.backward")
                         }
                     }
+                    .contextMenu {
+                        Button {
+                            shareReceipt(for: transaction)
+                        } label: {
+                            Label("Share Receipt", systemImage: "square.and.arrow.up")
+                        }
+                        
+                        Button(role: .destructive) {
+                            transactionToRevert = transaction
+                            isShowingRevertAlert = true
+                        } label: {
+                            Label("Revert Order", systemImage: "arrow.uturn.backward")
+                        }
+                    }
                 }
             }
         }
         .navigationTitle("Order Directory")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search Customer or Employee...")
+        // QoL: Impact haptic when order is successfully reverted
+        .sensoryFeedback(.success, trigger: allTransactions.count)
         .alert("Revert Order", isPresented: $isShowingRevertAlert, presenting: transactionToRevert) { transaction in
             Button("Cancel", role: .cancel) { }
             
             Button("Revert Order", role: .destructive) {
-                revertTransaction(transaction)
+                withAnimation {
+                    revertTransaction(transaction)
+                }
             }
         } message: { transaction in
             Text("Are you sure you want to revert this order? This will permanently delete the transaction and return the purchased items to your active stock.")
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 40, coordinateSpace: .global)
-                .onEnded { value in
-                    let w = value.translation.width
-                    let h = value.translation.height
-                    if h > 120 && abs(w) < 50 {
-                        isSearchFocused = true
-                    }
-                }
-        )
     }
     
     private func transactionRow(_ transaction: Transaction) -> some View {
@@ -132,13 +157,13 @@ struct OrderListView: View {
         try? modelContext.save()
     }
     
+    // shareReceipt function remains unchanged...
     private func shareReceipt(for transaction: Transaction) {
         if let email = transaction.customer?.email, !email.trimmingCharacters(in: .whitespaces).isEmpty {
             UIPasteboard.general.string = email
         }
         
         guard let url = ReceiptRenderer.generatePDF(from: transaction) else { return }
-        
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
@@ -152,7 +177,6 @@ struct OrderListView: View {
                 width: 0,
                 height: 0
             )
-            
             rootVC.present(activityVC, animated: true)
         }
     }

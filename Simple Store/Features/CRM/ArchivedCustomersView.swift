@@ -1,6 +1,6 @@
 //
 //  ArchivedCustomersView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-21.
 //
@@ -11,11 +11,11 @@ import SwiftData
 struct ArchivedCustomersView: View {
     @Environment(\.modelContext) private var modelContext
     
-
     @Query(sort: \Customer.lastName) private var allCustomers: [Customer]
     
     var archivedCustomers: [Customer] {
-        allCustomers.filter { !$0.isActive }
+        // Filters out customers that have been "scrubbed" and permanently deleted
+        allCustomers.filter { !$0.isActive && $0.firstName != "Deleted" }
     }
     
     var body: some View {
@@ -40,7 +40,9 @@ struct ArchivedCustomersView: View {
                     .padding(.vertical, 4)
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
                         Button {
-                            restoreCustomer(customer)
+                            withAnimation {
+                                restoreCustomer(customer)
+                            }
                         } label: {
                             Label("Restore", systemImage: "arrow.uturn.backward")
                         }
@@ -48,7 +50,26 @@ struct ArchivedCustomersView: View {
                     }
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
-                            permanentlyDelete(customer)
+                            withAnimation {
+                                permanentlyDelete(customer)
+                            }
+                        } label: {
+                            Label("Delete Forever", systemImage: "trash")
+                        }
+                    }
+                    .contextMenu {
+                        Button {
+                            withAnimation {
+                                restoreCustomer(customer)
+                            }
+                        } label: {
+                            Label("Restore Customer", systemImage: "arrow.uturn.backward")
+                        }
+                        
+                        Button(role: .destructive) {
+                            withAnimation {
+                                permanentlyDelete(customer)
+                            }
                         } label: {
                             Label("Delete Forever", systemImage: "trash")
                         }
@@ -67,8 +88,15 @@ struct ArchivedCustomersView: View {
     }
     
     private func permanentlyDelete(_ customer: Customer) {
-        // Warning: This will permanently orphan their past transactions
-        modelContext.delete(customer)
+        // Scrub the data to anonymize the record and preserve transaction history
+        customer.firstName = "Deleted"
+        customer.lastName = "Customer"
+        customer.email = ""
+        customer.phone = ""
+        customer.notes = ""
+        customer.status = nil
+        customer.isActive = false
+        
         try? modelContext.save()
     }
 }

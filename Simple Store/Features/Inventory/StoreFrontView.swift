@@ -1,6 +1,6 @@
 //
 //  StoreFrontView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-18.
 //
@@ -27,7 +27,8 @@ struct StorefrontView: View {
     @State private var navigateToSettings = false
     @State private var navigateToAddItem = false
     
-    @State private var dynamicScreenWidth: CGFloat = 390
+    // NEW: Programmatic navigation state for the isolated tap gesture
+    @State private var selectedProfileItem: StoreItem? = nil
     
     var isFilterActive: Bool {
         !searchText.isEmpty || showInStockOnly || showOutOfStockOnly || !selectedFilterTags.isEmpty
@@ -82,20 +83,28 @@ struct StorefrontView: View {
                         } else {
                             LazyVGrid(columns: columns, spacing: 16) {
                                 ForEach(filteredItems) { item in
-                                    NavigationLink(destination: ItemProfileView(item: item)) {
-                                        ItemCardView(item: item)
-                                    }
-                                    .buttonStyle(.plain)
+                                    ItemCardView(item: item)
+                                        // 1. Isolated Tap to Navigate
+                                        .onTapGesture {
+                                            selectedProfileItem = item
+                                        }
+                                        // 2. Isolated Long Press to Quick Add
+                                        .onLongPressGesture(minimumDuration: 0.4) {
+                                            let currentQty = cartManager.items[item] ?? 0
+                                            if currentQty < item.stockCount {
+                                                cartManager.items[item] = currentQty + 1
+                                                let generator = UIImpactFeedbackGenerator(style: .heavy)
+                                                generator.impactOccurred()
+                                            }
+                                        }
                                 }
                             }
                             .padding(.horizontal, 12)
                             .padding(.top, 16)
-                            // Adds extra padding at the bottom so the floating cart doesn't cover your last row
                             .padding(.bottom, cartManager.totalItemCount > 0 ? 100 : 20)
                         }
                     }
                     .overlay(alignment: .bottom) {
-                        // The Cart Button is now a floating overlay!
                         if cartManager.totalItemCount > 0 {
                             Button(action: {
                                 isShowingCheckout = true
@@ -128,30 +137,34 @@ struct StorefrontView: View {
                             .padding(.bottom, 20)
                             .transition(.move(edge: .bottom).combined(with: .opacity))
                             .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
+                            .sensoryFeedback(.success, trigger: cartManager.totalItemCount)
                         }
                     }
                 }
-                // NEW: Floating Liquid Glass Barcode Scanner
                 .overlay(alignment: .bottomTrailing) {
                     Button(action: { isShowingScanner = true }) {
                         Image(systemName: "barcode.viewfinder")
                             .font(.title)
                             .foregroundColor(.primary)
                             .padding(18)
-                            .background(.ultraThinMaterial) // Liquid Glass Effect
+                            .background(.ultraThinMaterial)
                             .clipShape(Circle())
                             .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
                     }
                     .padding(.trailing, 20)
-                    // Smart padding: Floats higher if the cart is visible so it doesn't overlap
                     .padding(.bottom, cartManager.totalItemCount > 0 ? 100 : 20)
                     .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
+                    .sensoryFeedback(.selection, trigger: isShowingScanner)
                 }
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search name or barcode...")
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button(action: { navigateToSettings = true }) {
+                        Button(action: {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                navigateToSettings = true
+                            }
+                        }) {
                             Image(systemName: "gearshape.fill")
                         }
                     }
@@ -163,10 +176,17 @@ struct StorefrontView: View {
                     }
                     
                     ToolbarItem(placement: .primaryAction) {
-                        NavigationLink(destination: AddItemView()) {
+                        Button(action: { navigateToAddItem = true }) {
                             Image(systemName: "plus")
                         }
                     }
+                }
+                // Safely handles routing to the item profile triggered by the tap gesture
+                .navigationDestination(item: $selectedProfileItem) { item in
+                    ItemProfileView(item: item)
+                }
+                .navigationDestination(isPresented: $navigateToAddItem) {
+                    AddItemView()
                 }
                 .sheet(isPresented: $isShowingCheckout) {
                     CartCheckoutView()
@@ -174,15 +194,33 @@ struct StorefrontView: View {
                 .sheet(isPresented: $isShowingScanner) {
                     BarcodeScannerView(scannedCode: $searchText)
                 }
-                .navigationDestination(isPresented: $navigateToAddItem) {
-                    AddItemView()
+                .overlay(alignment: .leading) {
+                    Color.clear
+                        .frame(width: 30)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 20)
+                                .onEnded { value in
+                                    if value.translation.width > 40 && abs(value.translation.height) < 50 {
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                            navigateToSettings = true
+                                        }
+                                    }
+                                }
+                        )
                 }
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear
-                            .onAppear { dynamicScreenWidth = proxy.size.width }
-                            .onChange(of: proxy.size.width) { _, newWidth in dynamicScreenWidth = newWidth }
-                    }
+                .overlay(alignment: .trailing) {
+                    Color.clear
+                        .frame(width: 30)
+                        .contentShape(Rectangle())
+                        .gesture(
+                            DragGesture(minimumDistance: 20)
+                                .onEnded { value in
+                                    if value.translation.width < -40 && abs(value.translation.height) < 50 {
+                                        navigateToAddItem = true
+                                    }
+                                }
+                        )
                 }
             }
             
@@ -194,34 +232,6 @@ struct StorefrontView: View {
                 .zIndex(2)
             }
         }
-        
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 40, coordinateSpace: .global)
-                .onEnded { value in
-                    let startX = value.startLocation.x
-                    let w = value.translation.width
-                    let h = value.translation.height
-                    
-                    if navigateToSettings {
-                        // Swipe left (a negative width gesture) to dismiss settings
-                        if w < 60 && abs(h) < 50 { navigateToSettings = false }
-                    } else {
-                        // 1. Swipe from Left Edge -> Open Settings
-                        if startX < 40 && w > 60 && abs(h) < 50 {
-                            navigateToSettings = true
-                        }
-                        // 2. Swipe from Right Edge -> Add Item
-                        else if startX > dynamicScreenWidth - 40 && w < -60 && abs(h) < 50 {
-                            navigateToAddItem = true
-                        }
-                        // 3. Deep Pull Down -> Focus Search Bar
-                        else if h > 120 && abs(w) < 50 {
-                            isSearchFocused = true
-                        }
-                    }
-                }
-        )
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: navigateToSettings)
     }
     
     var emptyStateView: some View {
@@ -248,6 +258,7 @@ struct StorefrontView: View {
                     }
                 }
                 .padding(.top, 8)
+                .buttonStyle(.borderedProminent)
             }
         }
         .padding(.top, 60)
@@ -263,6 +274,7 @@ struct FilterBarView: View {
     @Binding var selectedFilterTags: Set<ItemTag>
     var allTags: [ItemTag]
     var isFilterActive: Bool
+    
     var body: some View {
         HStack(spacing: 0) {
             if isFilterActive {
@@ -280,26 +292,51 @@ struct FilterBarView: View {
                         .background(Color.red.opacity(0.15)).foregroundColor(.red).clipShape(Capsule())
                 }
                 .padding(.leading, 16).padding(.vertical, 10).transition(.move(edge: .leading).combined(with: .opacity))
+                
                 Divider().frame(height: 20).padding(.leading, 12)
             }
+            
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    Button(action: { withAnimation { showInStockOnly.toggle(); if showInStockOnly { showOutOfStockOnly = false } } }) {
+                    Button(action: {
+                        withAnimation {
+                            showInStockOnly.toggle()
+                            if showInStockOnly { showOutOfStockOnly = false }
+                        }
+                    }) {
                         HStack { Image(systemName: showInStockOnly ? "checkmark.circle.fill" : "shippingbox.fill"); Text("In Stock") }
                             .font(.subheadline).padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(showInStockOnly ? Color.blue : Color(UIColor.secondarySystemBackground)).foregroundColor(showInStockOnly ? .white : .primary).clipShape(Capsule())
+                            .background(showInStockOnly ? Color.blue : Color(UIColor.secondarySystemBackground))
+                            .foregroundColor(showInStockOnly ? .white : .primary)
+                            .clipShape(Capsule())
                     }
-                    Button(action: { withAnimation { showOutOfStockOnly.toggle(); if showOutOfStockOnly { showInStockOnly = false } } }) {
+                    
+                    Button(action: {
+                        withAnimation {
+                            showOutOfStockOnly.toggle()
+                            if showOutOfStockOnly { showInStockOnly = false }
+                        }
+                    }) {
                         HStack { Image(systemName: showOutOfStockOnly ? "checkmark.circle.fill" : "shippingbox"); Text("Out of Stock") }
                             .font(.subheadline).padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(showOutOfStockOnly ? Color.red : Color(UIColor.secondarySystemBackground)).foregroundColor(showOutOfStockOnly ? .white : .primary).clipShape(Capsule())
+                            .background(showOutOfStockOnly ? Color.red : Color(UIColor.secondarySystemBackground))
+                            .foregroundColor(showOutOfStockOnly ? .white : .primary)
+                            .clipShape(Capsule())
                     }
+                    
                     Divider().frame(height: 20)
+                    
                     ForEach(allTags) { tag in
                         let isSelected = selectedFilterTags.contains(tag)
-                        Button(action: { withAnimation { if isSelected { selectedFilterTags.remove(tag) } else { selectedFilterTags.insert(tag) } } }) {
+                        Button(action: {
+                            withAnimation {
+                                if isSelected { selectedFilterTags.remove(tag) } else { selectedFilterTags.insert(tag) }
+                            }
+                        }) {
                             Text(tag.name).font(.subheadline).padding(.horizontal, 16).padding(.vertical, 8)
-                                .background(isSelected ? colorForTag(tag.name) : Color(UIColor.secondarySystemBackground)).foregroundColor(isSelected ? .white : .primary).clipShape(Capsule())
+                                .background(isSelected ? colorForTag(tag.name) : Color(UIColor.secondarySystemBackground))
+                                .foregroundColor(isSelected ? .white : .primary)
+                                .clipShape(Capsule())
                         }
                     }
                 }
@@ -307,9 +344,12 @@ struct FilterBarView: View {
             }
         }
         .background(Color(UIColor.systemBackground)).shadow(color: .black.opacity(0.05), radius: 3, x: 0, y: 3)
-        .animation(.default, value: isFilterActive).animation(.default, value: showInStockOnly)
-        .animation(.default, value: showOutOfStockOnly).animation(.default, value: selectedFilterTags)
+        .animation(.default, value: isFilterActive)
+        .animation(.default, value: showInStockOnly)
+        .animation(.default, value: showOutOfStockOnly)
+        .animation(.default, value: selectedFilterTags)
     }
+    
     private func colorForTag(_ name: String) -> Color {
         let colors: [Color] = [.blue, .purple, .orange, .pink, .indigo, .teal]
         let stableHash = name.unicodeScalars.reduce(0) { $0 + Int($1.value) }

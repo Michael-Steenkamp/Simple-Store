@@ -1,6 +1,6 @@
 //
 //  AddCustomerView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-19.
 //
@@ -24,9 +24,7 @@ struct AddCustomerView: View {
     var onSave: ((Customer) -> Void)? = nil
     
     var isEmailValid: Bool {
-        if email.isEmpty { return false }
-        let emailRegex = "[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,64}"
-        return NSPredicate(format: "SELF MATCHES %@", emailRegex).evaluate(with: email)
+        email.trimmingCharacters(in: .whitespaces).isEmpty || email.isValidEmail
     }
     
     var isFormValid: Bool {
@@ -83,6 +81,7 @@ struct AddCustomerView: View {
                         .lineLimit(3...6)
                 }
             }
+            .dismissKeyboardOnTap()
             .navigationTitle("New Customer")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

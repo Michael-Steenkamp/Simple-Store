@@ -1,6 +1,5 @@
 //
 //  ReceiptCustomizationView.swift
-//  Simple Inventory
 //
 //  Created by Michael Steenkamp on 2026-07-20.
 //

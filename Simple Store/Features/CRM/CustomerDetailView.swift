@@ -27,6 +27,7 @@ struct CustomerDetailView: View {
     }
     
     var body: some View {
+
         List {
             Section("Account Overview") {
                 if let status = customer.status {

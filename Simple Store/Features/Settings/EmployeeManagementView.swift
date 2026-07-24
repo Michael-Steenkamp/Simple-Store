@@ -1,6 +1,6 @@
 //
 //  EmployeeManagementView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-20.
 //
@@ -57,9 +57,27 @@ struct EmployeeManagementView: View {
                         .padding(.vertical, 4)
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
-                                archiveEmployee(employee)
+                                withAnimation {
+                                    archiveEmployee(employee)
+                                }
                             } label: {
                                 Label("Archive", systemImage: "archivebox")
+                            }
+                        }
+                        // Apple Best Practice: Duplicate swipe action in context menu
+                        .contextMenu {
+                            Button {
+                                isShowingEmployeeId = true
+                            } label: {
+                                Label("View ID", systemImage: "person.crop.circle")
+                            }
+                            
+                            Button(role: .destructive) {
+                                withAnimation {
+                                    archiveEmployee(employee)
+                                }
+                            } label: {
+                                Label("Archive Employee", systemImage: "archivebox")
                             }
                         }
                         .alert("\(employee.name)'s ID", isPresented: $isShowingEmployeeId) {
@@ -70,29 +88,26 @@ struct EmployeeManagementView: View {
                     }
                 }
                 .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search employees by name...")
+                .sensoryFeedback(.impact(weight: .medium), trigger: activeEmployees.count)
             }
         }
         .navigationTitle("Employee Directory")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: { isShowingAddSheet = true }) {
-                    Image(systemName: "plus")
+                HStack(spacing: 16) {
+                    NavigationLink(destination: ArchivedEmployeesView()) {
+                        Image(systemName: "archivebox")
+                    }
+                    
+                    Button(action: { isShowingAddSheet = true }) {
+                        Image(systemName: "plus")
+                    }
                 }
             }
         }
         .sheet(isPresented: $isShowingAddSheet) {
             AddEmployeeView()
         }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 40, coordinateSpace: .global)
-                .onEnded { value in
-                    let w = value.translation.width
-                    let h = value.translation.height
-                    if h > 120 && abs(w) < 50 {
-                        isSearchFocused = true
-                    }
-                }
-        )
     }
     
     private func archiveEmployee(_ employee: Employee) {
@@ -113,13 +128,102 @@ struct AddEmployeeView: View {
                     TextField("Full Name", text: $name).textContentType(.name)
                 }
             }
-            .navigationTitle("New Employee").navigationBarTitleDisplayMode(.inline)
+            .navigationTitle("New Employee")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { let newEmployee = Employee(name: name); modelContext.insert(newEmployee); try? modelContext.save(); dismiss() }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button("Save") {
+                        let newEmployee = Employee(name: name)
+                        modelContext.insert(newEmployee)
+                        try? modelContext.save()
+                        dismiss()
+                    }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
+    }
+}
+
+// MARK: - Archived Employees View
+struct ArchivedEmployeesView: View {
+    @Environment(\.modelContext) private var modelContext
+    
+    @Query(sort: \Employee.name) private var allEmployees: [Employee]
+    
+    var archivedEmployees: [Employee] {
+        allEmployees.filter { !$0.isActive }
+    }
+    
+    var body: some View {
+        List {
+            if archivedEmployees.isEmpty {
+                Text("No archived employees.")
+                    .foregroundColor(.secondary)
+                    .italic()
+                    .listRowBackground(Color.clear)
+            } else {
+                ForEach(archivedEmployees) { employee in
+                    HStack {
+                        Text(employee.name)
+                            .font(.headline)
+                            .foregroundColor(.secondary)
+                        
+                        Spacer()
+                    }
+                    .padding(.vertical, 4)
+                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                        Button {
+                            withAnimation {
+                                restoreEmployee(employee)
+                            }
+                        } label: {
+                            Label("Restore", systemImage: "arrow.uturn.backward")
+                        }
+                        .tint(.green)
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            withAnimation {
+                                permanentlyDelete(employee)
+                            }
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    // Apple Best Practice: Context Menu for Archived Items
+                    .contextMenu {
+                        Button {
+                            withAnimation {
+                                restoreEmployee(employee)
+                            }
+                        } label: {
+                            Label("Restore Employee", systemImage: "arrow.uturn.backward")
+                        }
+                        
+                        Button(role: .destructive) {
+                            withAnimation {
+                                permanentlyDelete(employee)
+                            }
+                        } label: {
+                            Label("Delete Forever", systemImage: "trash")
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("Archived Employees")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+    
+    private func restoreEmployee(_ employee: Employee) {
+        employee.isActive = true
+        try? modelContext.save()
+    }
+    
+    private func permanentlyDelete(_ employee: Employee) {
+        modelContext.delete(employee)
+        try? modelContext.save()
     }
 }

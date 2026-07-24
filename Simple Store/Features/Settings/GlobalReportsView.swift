@@ -13,6 +13,7 @@ struct GlobalReportsView: View {
     
     @State private var selectedTimeframe: Timeframe = .allTime
     @State private var isExporting = false
+    @State private var exportSuccess = false // Used for haptic trigger
     
     @State private var isShowingCustomExport = false
     @State private var customStartDate = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
@@ -86,7 +87,7 @@ struct GlobalReportsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                Picker("Timeframe", selection: $selectedTimeframe) {
+                Picker("Timeframe", selection: $selectedTimeframe.animation(.easeInOut)) {
                     ForEach(Timeframe.allCases) { timeframe in
                         Text(timeframe.rawValue).tag(timeframe)
                     }
@@ -144,6 +145,8 @@ struct GlobalReportsView: View {
             }
             .padding(.bottom, 40)
         }
+        // QoL: Smooth transition when data updates
+        .animation(.default, value: filteredTransactions.count)
         .navigationTitle("Global Sales")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -167,6 +170,7 @@ struct GlobalReportsView: View {
                 .disabled(filteredTransactions.isEmpty || isExporting)
             }
         }
+        .sensoryFeedback(.success, trigger: exportSuccess)
         .sheet(isPresented: $isShowingCustomExport) {
             NavigationStack {
                 Form {
@@ -204,7 +208,6 @@ struct GlobalReportsView: View {
     
     private func exportData(transactions: [Transaction], label: String) {
         guard !transactions.isEmpty else { return }
-        
         isExporting = true
         
         Task {
@@ -213,6 +216,7 @@ struct GlobalReportsView: View {
                 
                 await MainActor.run {
                     isExporting = false
+                    exportSuccess.toggle()
                     presentShareSheet(for: url)
                 }
             } catch {
@@ -239,6 +243,7 @@ struct GlobalReportsView: View {
     }
 }
 
+// KPICard remains unchanged...
 struct KPICard: View {
     let title: String
     let value: String
