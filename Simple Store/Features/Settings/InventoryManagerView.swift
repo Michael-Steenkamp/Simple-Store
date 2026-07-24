@@ -5,21 +5,21 @@
 //  Created by Michael Steenkamp on 2026-07-20.
 //
 
-//
-//  InventoryManagerView.swift
-//  Simple Inventory
-//
-
 import SwiftUI
 import SwiftData
 
 struct InventoryManagerView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(CartManager.self) private var cartManager
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
     @State private var searchText = ""
     @State private var isSearchFocused = false
     @State private var isShowingScanner = false
+    
+    // NEW: Separated boolean trigger and data payload for the modern alert API
+    @State private var isShowingArchiveAlert = false
+    @State private var itemToArchiveAlert: StoreItem? = nil
     
     var activeItems: [StoreItem] {
         allItems.filter { $0.isActive }
@@ -53,23 +53,14 @@ struct InventoryManagerView: View {
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
-                                withAnimation {
-                                    item.isActive = false
-                                    item.updatedAt = Date()
-                                    try? modelContext.save()
-                                }
+                                handleArchive(item)
                             } label: {
                                 Label("Archive", systemImage: "archivebox")
                             }
                         }
-                        // Apple Best Practice: Duplicate swipe action in context menu
                         .contextMenu {
                             Button(role: .destructive) {
-                                withAnimation {
-                                    item.isActive = false
-                                    item.updatedAt = Date()
-                                    try? modelContext.save()
-                                }
+                                handleArchive(item)
                             } label: {
                                 Label("Archive Item", systemImage: "archivebox")
                             }
@@ -112,6 +103,34 @@ struct InventoryManagerView: View {
         }
         .sheet(isPresented: $isShowingScanner) {
             BarcodeScannerView(scannedCode: $searchText)
+        }
+        // Modern iOS 15+ Alert API
+        .alert("Item in Cart", isPresented: $isShowingArchiveAlert, presenting: itemToArchiveAlert) { item in
+            Button("Cancel", role: .cancel) { }
+            Button("Archive & Remove", role: .destructive) {
+                withAnimation {
+                    item.isActive = false
+                    item.updatedAt = Date()
+                    cartManager.items.removeValue(forKey: item)
+                    try? modelContext.save()
+                }
+            }
+        } message: { item in
+            Text("This item is currently in your cart. Archiving it will remove it from the active cart. Continue?")
+        }
+    }
+    
+    // Checks if the item needs a warning before archiving
+    private func handleArchive(_ item: StoreItem) {
+        if cartManager.items.keys.contains(where: { $0.id == item.id }) {
+            itemToArchiveAlert = item
+            isShowingArchiveAlert = true
+        } else {
+            withAnimation {
+                item.isActive = false
+                item.updatedAt = Date()
+                try? modelContext.save()
+            }
         }
     }
 }
@@ -158,10 +177,11 @@ struct InventoryRowView: View {
 // MARK: - Archived Inventory View
 struct ArchivedInventoryView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(CartManager.self) private var cartManager
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
     var archivedItems: [StoreItem] {
-        allItems.filter { !$0.isActive }
+        allItems.filter { !$0.isActive && !$0.name.hasSuffix("(Deleted)") }
     }
     
     var body: some View {
@@ -195,7 +215,6 @@ struct ArchivedInventoryView: View {
                                 Label("Delete", systemImage: "trash")
                             }
                         }
-                        // Apple Best Practice: Context Menu for Archived Items
                         .contextMenu {
                             Button {
                                 withAnimation {
@@ -223,7 +242,14 @@ struct ArchivedInventoryView: View {
     }
     
     private func permanentlyDelete(_ item: StoreItem) {
-        modelContext.delete(item)
+        item.name = item.name + " (Deleted)"
+        item.imageData = nil
+        item.tags = []
+        item.barcode = nil
+        item.desc = nil
+        item.isActive = false
+        
+        cartManager.items.removeValue(forKey: item)
         try? modelContext.save()
     }
 }

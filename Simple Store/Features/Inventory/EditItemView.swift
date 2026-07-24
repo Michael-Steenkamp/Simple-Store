@@ -1,6 +1,6 @@
 //
 //  EditItemView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-18.
 //
@@ -12,6 +12,7 @@ import PhotosUI
 struct EditItemView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(CartManager.self) private var cartManager
     
     let item: StoreItem
     var onDelete: (() -> Void)? = nil
@@ -55,6 +56,11 @@ struct EditItemView: View {
     
     var isFormValid: Bool {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && Double(salesPriceString) != nil
+    }
+    
+    // Live check to adjust the danger zone alerts
+    var isInCart: Bool {
+        cartManager.items.keys.contains(where: { $0.id == item.id })
     }
     
     var body: some View {
@@ -186,7 +192,7 @@ struct EditItemView: View {
                             ScrollView(.horizontal, showsIndicators: false) {
                                 HStack {
                                     ForEach(selectedTags) { tag in
-                                        TagPillView(name: tag.name) // Use the standard shared component
+                                        TagPillView(name: tag.name)
                                     }
                                 }
                             }
@@ -198,7 +204,7 @@ struct EditItemView: View {
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless) // Protects against the global tap-to-dismiss gesture
+                .buttonStyle(.borderless)
             }
             
             // MARK: - Basic Details
@@ -226,7 +232,7 @@ struct EditItemView: View {
                             .foregroundColor(.green)
                             .fontWeight(.bold)
                     }
-                    .buttonStyle(.borderless) // Crucial to prevent tap swallow
+                    .buttonStyle(.borderless)
                 }
             }
             
@@ -284,26 +290,44 @@ struct EditItemView: View {
         }
         .alert("Archive Item", isPresented: $isShowingDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
-            Button("Archive", role: .destructive) {
+            Button(isInCart ? "Archive & Remove" : "Archive", role: .destructive) {
                 item.isActive = false
                 item.updatedAt = Date()
+                cartManager.items.removeValue(forKey: item)
                 try? modelContext.save()
                 dismiss()
                 onDelete?()
             }
         } message: {
-            Text("Are you sure you want to remove \(item.name) from the storefront? Past transaction records will be preserved.")
+            if isInCart {
+                Text("This item is currently in your cart. Archiving it will remove it from the cart. Continue?")
+            } else {
+                Text("Are you sure you want to remove \(item.name) from the storefront? Past transaction records will be preserved.")
+            }
         }
         .alert("Permanently Delete", isPresented: $isShowingHardDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                modelContext.delete(item)
+            Button(isInCart ? "Delete & Remove" : "Delete", role: .destructive) {
+                item.name = item.name + " (Deleted)"
+                item.imageData = nil
+                item.tags = []
+                item.barcode = nil
+                item.desc = nil
+                item.isActive = false
+                item.updatedAt = Date()
+                
+                cartManager.items.removeValue(forKey: item)
+                
                 try? modelContext.save()
                 dismiss()
                 onDelete?()
             }
         } message: {
-            Text("WARNING: This will permanently destroy \(item.name) from the database. It cannot be recovered.")
+            if isInCart {
+                Text("This item is in your cart. Permanently deleting it will strip its metadata and remove it from the cart. Continue?")
+            } else {
+                Text("WARNING: This will permanently strip the metadata of \(item.name) and remove it from the system. Transaction records will be preserved.")
+            }
         }
     }
     
@@ -325,8 +349,6 @@ struct EditItemView: View {
         
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
-        
-        item.updatedAt = Date()
         
         dismiss()
     }

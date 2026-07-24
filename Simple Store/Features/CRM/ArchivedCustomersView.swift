@@ -1,6 +1,6 @@
 //
 //  ArchivedCustomersView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-21.
 //
@@ -14,7 +14,8 @@ struct ArchivedCustomersView: View {
     @Query(sort: \Customer.lastName) private var allCustomers: [Customer]
     
     var archivedCustomers: [Customer] {
-        allCustomers.filter { !$0.isActive }
+        // Filters out customers that have been "scrubbed" and permanently deleted
+        allCustomers.filter { !$0.isActive && $0.firstName != "Deleted" }
     }
     
     var body: some View {
@@ -56,7 +57,6 @@ struct ArchivedCustomersView: View {
                             Label("Delete Forever", systemImage: "trash")
                         }
                     }
-                    // Apple Best Practice: Context Menu for Archived Items
                     .contextMenu {
                         Button {
                             withAnimation {
@@ -88,7 +88,15 @@ struct ArchivedCustomersView: View {
     }
     
     private func permanentlyDelete(_ customer: Customer) {
-        modelContext.delete(customer)
+        // Scrub the data to anonymize the record and preserve transaction history
+        customer.firstName = "Deleted"
+        customer.lastName = "Customer"
+        customer.email = ""
+        customer.phone = ""
+        customer.notes = ""
+        customer.status = nil
+        customer.isActive = false
+        
         try? modelContext.save()
     }
 }

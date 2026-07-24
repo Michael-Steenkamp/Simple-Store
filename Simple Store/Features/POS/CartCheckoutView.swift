@@ -1,6 +1,6 @@
 //
 //  CartCheckoutView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-21.
 //
@@ -44,9 +44,13 @@ struct CartCheckoutView: View {
             }
         }
         .onAppear {
-            if cartManager.paymentSplits.isEmpty {
-                cartManager.paymentSplits.append(PaymentSplitDraft(method: "Card", amount: cartManager.totalAmount))
-            }
+            // Evaluates the current splits vs the total when the sheet opens
+            let currentSplitsTotal = cartManager.paymentSplits.reduce(0) { $0 + ($1.amount ?? 0) }
+            syncPaymentSplits(with: cartManager.totalAmount, oldTotal: currentSplitsTotal)
+        }
+        .onChange(of: cartManager.totalAmount) { oldValue, newValue in
+            // Evaluates the total dynamically if items are swipe-deleted while inside the sheet
+            syncPaymentSplits(with: newValue, oldTotal: oldValue)
         }
     }
     
@@ -70,7 +74,7 @@ struct CartCheckoutView: View {
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) {
                                 cartManager.completelyRemove(item)
-                                balanceSplits()
+                                // onChange now automatically balances the splits
                             } label: {
                                 Label("Remove", systemImage: "trash")
                             }
@@ -300,6 +304,21 @@ struct CartCheckoutView: View {
         }
     }
     
+    // MARK: - Auto-Balancing Logic
+    private func syncPaymentSplits(with newTotal: Double, oldTotal: Double) {
+        let difference = newTotal - oldTotal
+        
+        if cartManager.paymentSplits.isEmpty {
+            if newTotal > 0 {
+                cartManager.paymentSplits.append(PaymentSplitDraft(method: "Card", amount: newTotal))
+            }
+        } else if abs(difference) > 0.01 {
+            // Stacks the difference on top of the very first payment option
+            let firstAmount = cartManager.paymentSplits[0].amount ?? 0
+            cartManager.paymentSplits[0].amount = max(0, firstAmount + difference)
+        }
+    }
+    
     private func successScreen(for transaction: Transaction) -> some View {
         VStack(spacing: 32) {
             Spacer()
@@ -329,12 +348,6 @@ struct CartCheckoutView: View {
             .padding(.horizontal, 24).padding(.bottom, 40)
         }
         .navigationBarHidden(true)
-    }
-    
-    private func balanceSplits() {
-        if cartManager.paymentSplits.count == 1 {
-            cartManager.paymentSplits[0].amount = cartManager.totalAmount
-        }
     }
     
     private func processTransaction() {

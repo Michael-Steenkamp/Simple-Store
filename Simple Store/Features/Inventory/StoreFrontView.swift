@@ -27,6 +27,9 @@ struct StorefrontView: View {
     @State private var navigateToSettings = false
     @State private var navigateToAddItem = false
     
+    // NEW: Programmatic navigation state for the isolated tap gesture
+    @State private var selectedProfileItem: StoreItem? = nil
+    
     var isFilterActive: Bool {
         !searchText.isEmpty || showInStockOnly || showOutOfStockOnly || !selectedFilterTags.isEmpty
     }
@@ -80,22 +83,13 @@ struct StorefrontView: View {
                         } else {
                             LazyVGrid(columns: columns, spacing: 16) {
                                 ForEach(filteredItems) { item in
-                                    let isInCart = cartManager.items.keys.contains(where: { $0.id == item.id })
-                                    
-                                    Group {
-                                        if isInCart {
-                                            // Standard view logic without navigating to edit if in cart
-                                            ItemCardView(item: item)
-                                        } else {
-                                            NavigationLink(destination: ItemProfileView(item: item)) {
-                                                ItemCardView(item: item)
-                                            }
+                                    ItemCardView(item: item)
+                                        // 1. Isolated Tap to Navigate
+                                        .onTapGesture {
+                                            selectedProfileItem = item
                                         }
-                                    }
-                                    .buttonStyle(.plain)
-                                    // MARK: - Instant Quick Add Mechanic
-                                    .simultaneousGesture(
-                                        LongPressGesture(minimumDuration: 0.4).onEnded { _ in
+                                        // 2. Isolated Long Press to Quick Add
+                                        .onLongPressGesture(minimumDuration: 0.4) {
                                             let currentQty = cartManager.items[item] ?? 0
                                             if currentQty < item.stockCount {
                                                 cartManager.items[item] = currentQty + 1
@@ -103,7 +97,6 @@ struct StorefrontView: View {
                                                 generator.impactOccurred()
                                             }
                                         }
-                                    )
                                 }
                             }
                             .padding(.horizontal, 12)
@@ -188,14 +181,18 @@ struct StorefrontView: View {
                         }
                     }
                 }
+                // Safely handles routing to the item profile triggered by the tap gesture
+                .navigationDestination(item: $selectedProfileItem) { item in
+                    ItemProfileView(item: item)
+                }
+                .navigationDestination(isPresented: $navigateToAddItem) {
+                    AddItemView()
+                }
                 .sheet(isPresented: $isShowingCheckout) {
                     CartCheckoutView()
                 }
                 .sheet(isPresented: $isShowingScanner) {
                     BarcodeScannerView(scannedCode: $searchText)
-                }
-                .navigationDestination(isPresented: $navigateToAddItem) {
-                    AddItemView()
                 }
                 .overlay(alignment: .leading) {
                     Color.clear
