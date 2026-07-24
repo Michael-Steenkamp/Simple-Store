@@ -1,6 +1,6 @@
 //
 //  TransactionDetailView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-21.
 //
@@ -15,6 +15,16 @@ struct TransactionDetailView: View {
     
     let transaction: Transaction
     @State private var isShowingCheckout = false
+    
+    var canReorder: Bool {
+        guard let items = transaction.lineItems else { return false }
+        return items.contains { lineItem in
+            if let liveItem = allItems.first(where: { $0.id.uuidString == lineItem.itemID }) {
+                return liveItem.isActive && !liveItem.name.hasSuffix("(Deleted)") && liveItem.stockCount > 0
+            }
+            return false
+        }
+    }
     
     var body: some View {
         List {
@@ -44,7 +54,11 @@ struct TransactionDetailView: View {
                             Text((Double(lineItem.quantity) * lineItem.pricePerUnit), format: .currency(code: "CAD"))
                         }
                         .swipeActions(edge: .trailing) {
-                            if let liveItem = matchedItem, liveItem.stockCount > 0 {
+                            if let liveItem = matchedItem,
+                               liveItem.stockCount > 0,
+                               liveItem.isActive,
+                               !liveItem.name.hasSuffix("(Deleted)") {
+                                
                                 Button {
                                     cartManager.add(liveItem)
                                 } label: {
@@ -60,8 +74,10 @@ struct TransactionDetailView: View {
         .navigationTitle("Order Details")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button("Order Again") {
-                    reorderEntireTransaction()
+                if canReorder {
+                    Button("Order Again") {
+                        reorderEntireTransaction()
+                    }
                 }
             }
         }
@@ -91,10 +107,15 @@ struct TransactionDetailView: View {
     
     private func reorderEntireTransaction() {
         cartManager.clearCart()
-        
+                
         if let items = transaction.lineItems {
             for lineItem in items {
-                if let liveItem = allItems.first(where: { $0.id.uuidString == lineItem.itemID }), liveItem.stockCount >= lineItem.quantity {
+                // Verify the item is active and not scrubbed
+                if let liveItem = allItems.first(where: { $0.id.uuidString == lineItem.itemID }),
+                   liveItem.isActive,
+                   !liveItem.name.hasSuffix("(Deleted)"),
+                   liveItem.stockCount >= lineItem.quantity {
+                    
                     // Add the historical quantity to the cart
                     for _ in 0..<lineItem.quantity {
                         cartManager.add(liveItem)
