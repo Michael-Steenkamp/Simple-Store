@@ -166,18 +166,15 @@ struct EditItemView: View {
                     Spacer()
                     
                     Button(action: {
-                        hideKeyboard()
                         isShowingScanner = true
                     }) {
                         Image(systemName: "barcode.viewfinder")
                             .font(.title3)
                             .foregroundColor(.blue)
                     }
-                    .buttonStyle(.borderless)
                 }
                 
                 Button(action: {
-                    hideKeyboard()
                     isShowingTagManager = true
                 }) {
                     HStack {
@@ -204,7 +201,6 @@ struct EditItemView: View {
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
             }
             
             // MARK: - Basic Details
@@ -232,7 +228,6 @@ struct EditItemView: View {
                             .foregroundColor(.green)
                             .fontWeight(.bold)
                     }
-                    .buttonStyle(.borderless)
                 }
             }
             
@@ -245,8 +240,6 @@ struct EditItemView: View {
                         Text("Archive Item")
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
-                    .buttonStyle(.borderless)
-                    
                 } else {
                     Button(action: {
                         item.isActive = true
@@ -256,7 +249,6 @@ struct EditItemView: View {
                             .frame(maxWidth: .infinity, alignment: .center)
                             .foregroundColor(.blue)
                     }
-                    .buttonStyle(.borderless)
                     
                     Button(role: .destructive, action: {
                         isShowingHardDeleteConfirm = true
@@ -264,11 +256,10 @@ struct EditItemView: View {
                         Text("Permanently Delete")
                             .frame(maxWidth: .infinity, alignment: .center)
                     }
-                    .buttonStyle(.borderless)
                 }
             }
         }
-        .dismissKeyboardOnTap()
+        .scrollDismissesKeyboard(.automatic)
         .navigationTitle("Edit Item")
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("Add Photo", isPresented: $isShowingPhotoOptions, titleVisibility: .visible) {
