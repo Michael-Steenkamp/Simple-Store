@@ -142,18 +142,15 @@ struct AddItemView: View {
                         Spacer()
                         
                         Button(action: {
-                            hideKeyboard()
                             isShowingScanner = true
                         }) {
                             Image(systemName: "barcode.viewfinder")
                                 .font(.title3)
                                 .foregroundColor(.blue)
                         }
-                        .buttonStyle(.borderless)
                     }
                     
                     Button(action: {
-                        hideKeyboard()
                         isShowingTagManager = true
                     }) {
                         HStack {
@@ -180,7 +177,6 @@ struct AddItemView: View {
                         }
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.borderless) // Protects against the global tap-to-dismiss gesture
                 }
                 
                 // MARK: - Basic Details
@@ -197,7 +193,7 @@ struct AddItemView: View {
                     }
                 }
             }
-            .dismissKeyboardOnTap()
+            .scrollDismissesKeyboard(.automatic)
             .navigationTitle("New Item")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

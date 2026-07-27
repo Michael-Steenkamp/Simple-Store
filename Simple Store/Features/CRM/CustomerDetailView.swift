@@ -1,6 +1,6 @@
 //
 //  CustomerDetailView.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-19.
 //

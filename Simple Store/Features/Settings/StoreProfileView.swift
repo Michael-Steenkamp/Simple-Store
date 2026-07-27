@@ -161,7 +161,7 @@ struct StoreProfileView: View {
                 Toggle("Show \"Served By\" Name", isOn: $showEmployeeOnReceipt)
             }
         }
-        .dismissKeyboardOnTap()
+        .scrollDismissesKeyboard(.immediately)
         .navigationTitle("Store Profile")
         .navigationBarTitleDisplayMode(.inline)
         // Clean up the phone number format when the user finishes typing
