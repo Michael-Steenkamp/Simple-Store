@@ -110,6 +110,7 @@ struct EditCustomerView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.automatic)
             .navigationTitle("Edit Profile")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -81,7 +81,7 @@ struct AddCustomerView: View {
                         .lineLimit(3...6)
                 }
             }
-            .dismissKeyboardOnTap()
+            .scrollDismissesKeyboard(.automatic)
             .navigationTitle("New Customer")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

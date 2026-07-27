@@ -41,7 +41,7 @@ struct ImagePicker: View {
     }
 }
 
-// MARK: - 1. Native Image Picker (No Square Cropping)
+// MARK: - Native Image Picker
 struct NativeImagePicker: UIViewControllerRepresentable {
     var sourceType: UIImagePickerController.SourceType
     @Binding var inputImage: UIImage?
@@ -50,7 +50,6 @@ struct NativeImagePicker: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = sourceType
-        // Forced to FALSE to bypass Apple's native square crop
         picker.allowsEditing = false
         picker.delegate = context.coordinator
         return picker
@@ -73,7 +72,6 @@ struct NativeImagePicker: UIViewControllerRepresentable {
             if let image = info[.originalImage] as? UIImage {
                 parent.inputImage = image
             } else {
-                // If they didn't pick an image, dismiss the whole sheet
                 parent.dismiss()
             }
         }
@@ -84,7 +82,7 @@ struct NativeImagePicker: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - 2. Custom Circular Crop Engine
+// MARK: - Image Crop View with Circular Guide Overlay
 struct ImageCropView: View {
     let image: UIImage
     @Binding var croppedData: Data?
@@ -101,6 +99,7 @@ struct ImageCropView: View {
                 Spacer()
                 
                 cropCanvas
+                    // Circular guide overlay for preview framing
                     .mask(Circle())
                     .overlay(Circle().stroke(Color.white.opacity(0.5), lineWidth: 2))
                     .shadow(radius: 10)
@@ -153,21 +152,17 @@ struct ImageCropView: View {
     
     @MainActor
     private func saveCrop() {
-        // Generates the final circular view
-        let circularView = cropCanvas
-            .mask(Circle())
+        // Renders the 300x300 square content so item cards display cleanly
+        let squareView = cropCanvas
             .frame(width: 300, height: 300)
         
-        let renderer = ImageRenderer(content: circularView)
-        // Scaled to 3.0 for crisp retina resolution
+        let renderer = ImageRenderer(content: squareView)
         renderer.scale = 3.0
         
         if let croppedUIImage = renderer.uiImage {
-            // PNG Data is strictly used to preserve the transparent background outside the circle
-            croppedData = croppedUIImage.pngData()
+            croppedData = croppedUIImage.jpegData(compressionQuality: 0.8) ?? croppedUIImage.pngData()
         }
         
-        // Closes the full ImagePicker sheet
         onDismiss()
     }
 }
