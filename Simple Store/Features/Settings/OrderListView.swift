@@ -1,6 +1,6 @@
 //
 //  OrderListView.swift
-//  Simple Inventory
+//  Simple Store
 //
 
 import SwiftUI
@@ -8,6 +8,11 @@ import SwiftData
 
 struct OrderListView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(SyncManager.self) private var syncManager
+    
+    // NEW: Inject Session to gate destructive actions
+    @Environment(SessionManager.self) private var session
+    
     @Query(sort: \Transaction.date, order: .reverse) private var allTransactions: [Transaction]
     @Query private var allItems: [StoreItem]
     
@@ -18,6 +23,10 @@ struct OrderListView: View {
     @State private var isShowingRevertAlert = false
     
     @AppStorage("hasDiscoveredSwipe") private var hasDiscoveredSwipe = false
+    
+    private var isAdmin: Bool {
+        session.currentUser?.role == .admin
+    }
     
     var filteredTransactions: [Transaction] {
         if searchText.isEmpty {
@@ -68,35 +77,22 @@ struct OrderListView: View {
                         }
                         .tint(.blue)
                     }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
+                    // NEW: Gated destructive swipe/context actions
+                    .modifier(AdminTransactionActionModifier(
+                        isAdmin: isAdmin,
+                        transaction: transaction,
+                        onShare: { shareReceipt(for: transaction) },
+                        onRevert: {
                             transactionToRevert = transaction
                             isShowingRevertAlert = true
-                        } label: {
-                            Label("Revert", systemImage: "arrow.uturn.backward")
                         }
-                    }
-                    .contextMenu {
-                        Button {
-                            shareReceipt(for: transaction)
-                        } label: {
-                            Label("Share Receipt", systemImage: "square.and.arrow.up")
-                        }
-                        
-                        Button(role: .destructive) {
-                            transactionToRevert = transaction
-                            isShowingRevertAlert = true
-                        } label: {
-                            Label("Revert Order", systemImage: "arrow.uturn.backward")
-                        }
-                    }
+                    ))
                 }
             }
         }
         .navigationTitle("Order Directory")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search Customer or Employee...")
-        // QoL: Impact haptic when order is successfully reverted
         .sensoryFeedback(.success, trigger: allTransactions.count)
         .alert("Revert Order", isPresented: $isShowingRevertAlert, presenting: transactionToRevert) { transaction in
             Button("Cancel", role: .cancel) { }
@@ -146,18 +142,29 @@ struct OrderListView: View {
     }
     
     private func revertTransaction(_ transaction: Transaction) {
+        var restoredItems: [StoreItem] = []
+        
         if let lineItems = transaction.lineItems {
             for lineItem in lineItems {
                 if let storeItem = allItems.first(where: { $0.id.uuidString == lineItem.itemID }) {
                     storeItem.stockCount += lineItem.quantity
+                    restoredItems.append(storeItem)
                 }
             }
         }
+        
+        let txId = transaction.id.uuidString
         modelContext.delete(transaction)
         try? modelContext.save()
+        
+        Task {
+            await syncManager.deleteTransactionFromCloud(txId)
+            for item in restoredItems {
+                await syncManager.pushItemToCloud(item)
+            }
+        }
     }
     
-    // shareReceipt function remains unchanged...
     private func shareReceipt(for transaction: Transaction) {
         if let email = transaction.customer?.email, !email.trimmingCharacters(in: .whitespaces).isEmpty {
             UIPasteboard.general.string = email
@@ -178,6 +185,40 @@ struct OrderListView: View {
                 height: 0
             )
             rootVC.present(activityVC, animated: true)
+        }
+    }
+}
+
+// NEW: Helper Modifier to securely conditionally render destructive actions for Admins
+struct AdminTransactionActionModifier: ViewModifier {
+    let isAdmin: Bool
+    let transaction: Transaction
+    let onShare: () -> Void
+    let onRevert: () -> Void
+    
+    func body(content: Content) -> some View {
+        if isAdmin {
+            content
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    Button(role: .destructive) { onRevert() } label: {
+                        Label("Revert", systemImage: "arrow.uturn.backward")
+                    }
+                }
+                .contextMenu {
+                    Button { onShare() } label: {
+                        Label("Share Receipt", systemImage: "square.and.arrow.up")
+                    }
+                    Button(role: .destructive) { onRevert() } label: {
+                        Label("Revert Order", systemImage: "arrow.uturn.backward")
+                    }
+                }
+        } else {
+            content
+                .contextMenu {
+                    Button { onShare() } label: {
+                        Label("Share Receipt", systemImage: "square.and.arrow.up")
+                    }
+                }
         }
     }
 }

@@ -1,6 +1,6 @@
 //
 //  CRMModels.swift
-//  Simple Inventory
+//  Simple Store
 //
 //  Created by Michael Steenkamp on 2026-07-19.
 //
@@ -13,12 +13,14 @@ import SwiftData
 final class CustomerStatus {
     var id: UUID = UUID()
     var name: String = ""
+    var storeId: String?
     
     var customers: [Customer]?
     
-    init(id: UUID = UUID(), name: String) {
+    init(id: UUID = UUID(), name: String, storeId: String?) {
         self.id = id
         self.name = name
+        self.storeId = storeId
     }
 }
 
@@ -26,6 +28,7 @@ final class CustomerStatus {
 @Model
 final class Customer {
     var id: UUID = UUID()
+    var storeId: String?
     var firstName: String = ""
     var lastName: String = ""
     var email: String = ""
@@ -41,8 +44,9 @@ final class Customer {
     @Relationship(deleteRule: .cascade)
     var transactions: [Transaction]?
     
-    init(id: UUID = UUID(), firstName: String, lastName: String, email: String = "", phone: String = "", notes: String = "", status: CustomerStatus? = nil) {
+    init(id: UUID = UUID(), storeId: String? = nil, firstName: String, lastName: String, email: String = "", phone: String = "", notes: String = "", status: CustomerStatus? = nil) {
         self.id = id
+        self.storeId = storeId
         self.firstName = firstName
         self.lastName = lastName
         self.email = email
@@ -64,11 +68,13 @@ extension Customer {
 @Model
 final class Employee {
     var id: UUID = UUID()
+    var storeId: String?
     var name: String = ""
     var isActive: Bool = true
     
-    init(id: UUID = UUID(), name: String, isActive: Bool = true) {
+    init(id: UUID = UUID(), storeId: String? = nil, name: String, isActive: Bool = true) {
         self.id = id
+        self.storeId = storeId
         self.name = name
         self.isActive = isActive
     }
@@ -78,6 +84,7 @@ final class Employee {
 @Model
 final class Transaction {
     var id: UUID = UUID()
+    var storeId: String?
     var date: Date = Date()
     var totalAmount: Double = 0.0
     
@@ -87,19 +94,28 @@ final class Transaction {
     @Relationship(deleteRule: .cascade)
     var payments: [PaymentSplit]?
     
+    // The staff member processing the sale
     var employeeName: String?
     var employeeId: String?
     
+    // The buyer (Customer)
     @Relationship(inverse: \Customer.transactions)
     var customer: Customer?
     
-    init(id: UUID = UUID(), totalAmount: Double, employeeName: String? = nil, employeeId: String? = nil, customer: Customer? = nil) {
+    // NEW: The buyer (Internal Staff)
+    var buyerEmployeeName: String?
+    var buyerEmployeeId: String?
+    
+    init(id: UUID = UUID(), storeId: String? = nil, totalAmount: Double, employeeName: String? = nil, employeeId: String? = nil, customer: Customer? = nil, buyerEmployeeName: String? = nil, buyerEmployeeId: String? = nil) {
         self.id = id
+        self.storeId = storeId
         self.date = Date()
         self.totalAmount = totalAmount
         self.employeeName = employeeName
         self.employeeId = employeeId
         self.customer = customer
+        self.buyerEmployeeName = buyerEmployeeName
+        self.buyerEmployeeId = buyerEmployeeId
     }
 }
 

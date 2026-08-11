@@ -7,13 +7,14 @@
 
 import SwiftUI
 import SwiftData
+import Charts
 
 struct GlobalReportsView: View {
     @Query(sort: \Transaction.date, order: .reverse) private var allTransactions: [Transaction]
     
     @State private var selectedTimeframe: Timeframe = .allTime
     @State private var isExporting = false
-    @State private var exportSuccess = false // Used for haptic trigger
+    @State private var exportSuccess = false
     
     @State private var isShowingCustomExport = false
     @State private var customStartDate = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
@@ -27,6 +28,7 @@ struct GlobalReportsView: View {
         var id: String { self.rawValue }
     }
     
+    // MARK: - Data Computations
     var filteredTransactions: [Transaction] {
         let calendar = Calendar.current
         let now = Date()
@@ -63,6 +65,46 @@ struct GlobalReportsView: View {
         return totalRevenue / Double(filteredTransactions.count)
     }
     
+    // MARK: - Chart Data Models
+    struct RevenueData: Identifiable {
+        let id = UUID()
+        let date: Date
+        let amount: Double
+    }
+    
+    var revenueTimeSeries: [RevenueData] {
+        let calendar = Calendar.current
+        var grouped: [Date: Double] = [:]
+        
+        for tx in filteredTransactions {
+            let dateKey: Date
+            switch selectedTimeframe {
+            case .today:
+                // Group by hour
+                dateKey = calendar.date(bySetting: .minute, value: 0, of: tx.date) ?? tx.date
+            case .thisWeek, .thisMonth:
+                // Group by day
+                dateKey = calendar.startOfDay(for: tx.date)
+            case .allTime:
+                // Group by month
+                let comps = calendar.dateComponents([.year, .month], from: tx.date)
+                dateKey = calendar.date(from: comps) ?? tx.date
+            }
+            grouped[dateKey, default: 0] += tx.totalAmount
+        }
+        
+        return grouped.map { RevenueData(date: $0.key, amount: $0.value) }
+            .sorted { $0.date < $1.date }
+    }
+    
+    var chartUnit: Calendar.Component {
+        switch selectedTimeframe {
+        case .today: return .hour
+        case .thisWeek, .thisMonth: return .day
+        case .allTime: return .month
+        }
+    }
+    
     var topSellingItems: [(name: String, quantity: Int, revenue: Double)] {
         var itemStats: [String: (quantity: Int, revenue: Double)] = [:]
         
@@ -86,7 +128,8 @@ struct GlobalReportsView: View {
     
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: 24) {
+                // MARK: - Timeframe Selector
                 Picker("Timeframe", selection: $selectedTimeframe.animation(.easeInOut)) {
                     ForEach(Timeframe.allCases) { timeframe in
                         Text(timeframe.rawValue).tag(timeframe)
@@ -96,6 +139,7 @@ struct GlobalReportsView: View {
                 .padding(.horizontal)
                 .padding(.top, 10)
                 
+                // MARK: - KPI Cards
                 VStack(spacing: 16) {
                     HStack(spacing: 16) {
                         KPICard(title: "Gross Revenue", value: totalRevenue.formatted(.currency(code: "CAD")), icon: "dollarsign.circle.fill", color: .green)
@@ -111,6 +155,45 @@ struct GlobalReportsView: View {
                 
                 Divider().padding(.vertical, 8)
                 
+                // MARK: - Revenue Trend Chart
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Revenue Trend")
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .padding(.horizontal)
+                    
+                    if revenueTimeSeries.isEmpty {
+                        Text("No sales data available to chart.")
+                            .foregroundColor(.secondary)
+                            .italic()
+                            .padding(.horizontal)
+                            .frame(height: 180)
+                    } else {
+                        Chart {
+                            ForEach(revenueTimeSeries) { data in
+                                BarMark(
+                                    x: .value("Date", data.date, unit: chartUnit),
+                                    y: .value("Revenue", data.amount)
+                                )
+                                .foregroundStyle(Color.green.gradient)
+                                .cornerRadius(4)
+                            }
+                        }
+                        .chartXAxis {
+                            AxisMarks(values: .stride(by: chartUnit)) { _ in
+                                AxisGridLine()
+                                AxisTick()
+                                AxisValueLabel(format: xAxisFormat())
+                            }
+                        }
+                        .frame(height: 200)
+                        .padding(.horizontal)
+                    }
+                }
+                
+                Divider().padding(.vertical, 8)
+                
+                // MARK: - Top Performing Items List
                 VStack(alignment: .leading, spacing: 16) {
                     Text("Top Performing Items")
                         .font(.title3)
@@ -118,7 +201,7 @@ struct GlobalReportsView: View {
                         .padding(.horizontal)
                     
                     if topSellingItems.isEmpty {
-                        Text("No sales data for this period.")
+                        Text("No item data for this period.")
                             .foregroundColor(.secondary)
                             .italic()
                             .padding(.horizontal)
@@ -126,7 +209,10 @@ struct GlobalReportsView: View {
                         VStack(spacing: 12) {
                             ForEach(Array(topSellingItems.enumerated()), id: \.element.name) { index, item in
                                 HStack {
-                                    Text("\(index + 1)").font(.headline).foregroundColor(.secondary).frame(width: 24, alignment: .leading)
+                                    Text("\(index + 1)")
+                                        .font(.headline)
+                                        .foregroundColor(.secondary)
+                                        .frame(width: 24, alignment: .leading)
                                     VStack(alignment: .leading) {
                                         Text(item.name).fontWeight(.semibold)
                                         Text("\(item.quantity) units sold").font(.caption).foregroundColor(.secondary)
@@ -145,7 +231,6 @@ struct GlobalReportsView: View {
             }
             .padding(.bottom, 40)
         }
-        // QoL: Smooth transition when data updates
         .animation(.default, value: filteredTransactions.count)
         .navigationTitle("Global Sales")
         .navigationBarTitleDisplayMode(.inline)
@@ -206,6 +291,16 @@ struct GlobalReportsView: View {
         }
     }
     
+    // MARK: - Helpers
+    private func xAxisFormat() -> Date.FormatStyle {
+        switch selectedTimeframe {
+        case .today: return .dateTime.hour()
+        case .thisWeek: return .dateTime.weekday(.abbreviated)
+        case .thisMonth: return .dateTime.day()
+        case .allTime: return .dateTime.month(.abbreviated).year()
+        }
+    }
+    
     private func exportData(transactions: [Transaction], label: String) {
         guard !transactions.isEmpty else { return }
         isExporting = true
@@ -243,7 +338,7 @@ struct GlobalReportsView: View {
     }
 }
 
-// KPICard remains unchanged...
+// MARK: - Component View
 struct KPICard: View {
     let title: String
     let value: String

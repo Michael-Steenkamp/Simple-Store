@@ -20,7 +20,7 @@ struct SplashScreenView: View {
             if hasCompletedOnboarding {
                 StorefrontView()
             } else {
-                OnboardingView()
+                AuthenticationView()
             }
         } else {
             ZStack {

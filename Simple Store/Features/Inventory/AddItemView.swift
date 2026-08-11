@@ -13,6 +13,9 @@ struct AddItemView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     
+    @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
+    
     @State private var name: String = ""
     @State private var desc: String = ""
     @State private var stockCount: Int = 0
@@ -165,7 +168,7 @@ struct AddItemView: View {
                                 ScrollView(.horizontal, showsIndicators: false) {
                                     HStack {
                                         ForEach(selectedTags) { tag in
-                                            TagPillView(name: tag.name) // Use the standard shared component
+                                            TagPillView(name: tag.name)
                                         }
                                     }
                                 }
@@ -230,6 +233,7 @@ struct AddItemView: View {
         let finalCost = Double(itemCostString) ?? 0.0
         
         let newItem = StoreItem(
+            storeId: session.currentUser?.storeId,
             tags: selectedTags,
             name: name.trimmingCharacters(in: .whitespaces),
             desc: desc.trimmingCharacters(in: .whitespaces).isEmpty ? nil : desc.trimmingCharacters(in: .whitespaces),
@@ -242,6 +246,17 @@ struct AddItemView: View {
         
         modelContext.insert(newItem)
         try? modelContext.save()
+        
+        // NEW: Push image to Firebase Storage if exists before updating cloud database
+        Task {
+            if let data = imageData, let storeId = session.currentUser?.storeId {
+                if let url = try? await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: newItem.id.uuidString) {
+                    newItem.imageURL = url
+                    try? modelContext.save()
+                }
+            }
+            await syncManager.pushItemToCloud(newItem)
+        }
         
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
