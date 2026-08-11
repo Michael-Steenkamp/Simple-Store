@@ -9,6 +9,11 @@ import SwiftUI
 import PhotosUI
 
 struct StoreProfileView: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
+    
     // MARK: - Auto-Saving Data Bindings
     @AppStorage("storeName") private var storeName: String = ""
     @AppStorage("storeEmail") private var storeEmail: String = ""
@@ -28,11 +33,10 @@ struct StoreProfileView: View {
     @State private var isShowingPhotoOptions = false
     @State private var isShowingImagePicker = false
     @State private var imageSource: UIImagePickerController.SourceType = .photoLibrary
+    @State private var isSyncingProfile = false
     
-    // Used to trigger phone formatting when the user finishes typing
     @FocusState private var isPhoneFocused: Bool
     
-    // Validates the email live
     var isEmailValid: Bool {
         let trimmed = storeEmail.trimmingCharacters(in: .whitespaces)
         return trimmed.isEmpty || trimmed.isValidEmail
@@ -164,13 +168,25 @@ struct StoreProfileView: View {
         .scrollDismissesKeyboard(.immediately)
         .navigationTitle("Store Profile")
         .navigationBarTitleDisplayMode(.inline)
-        // Clean up the phone number format when the user finishes typing
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button(action: {
+                    Task { await syncProfileToCloud() }
+                }) {
+                    if isSyncingProfile {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Save to Cloud").fontWeight(.bold)
+                    }
+                }
+                .disabled(!isEmailValid || storeName.trimmingCharacters(in: .whitespaces).isEmpty || isSyncingProfile)
+            }
+        }
         .onChange(of: isPhoneFocused) { _, isFocused in
             if !isFocused {
                 storePhone = storePhone.formattedAsPhoneNumber()
             }
         }
-        // Save or remove logo immediately upon selection
         .onChange(of: logoData) { _, newData in
             if let newData {
                 UserDefaults.standard.set(newData, forKey: "storeLogo")
@@ -187,5 +203,42 @@ struct StoreProfileView: View {
         .fullScreenCover(isPresented: $isShowingImagePicker) {
             ImagePicker(sourceType: imageSource, selectedImage: $logoData).ignoresSafeArea()
         }
+    }
+    
+    // MARK: - Cloud Sync
+    private func syncProfileToCloud() async {
+        guard let storeId = session.currentUser?.storeId else { return }
+        isSyncingProfile = true
+        
+        // NEW: Upload logo image to Storage and retrieve the URL
+        var storeLogoURL = ""
+        if let logoData {
+            if let url = try? await StorageManager.shared.uploadStoreLogo(data: logoData, storeId: storeId) {
+                storeLogoURL = url
+            }
+        }
+        
+        let payload: [String: Any] = [
+            "storeName": storeName,
+            "storeEmail": storeEmail,
+            "storePhone": storePhone,
+            "storeAddress": storeAddress,
+            "storeWebsite": storeWebsite,
+            "receiptThankYou": receiptThankYou,
+            "receiptReturnPolicy": receiptReturnPolicy,
+            "showLogoOnReceipt": showLogoOnReceipt,
+            "showAddressOnReceipt": showAddressOnReceipt,
+            "showWebsiteOnReceipt": showWebsiteOnReceipt,
+            "showEmployeeOnReceipt": showEmployeeOnReceipt,
+            "storeLogoURL": storeLogoURL // Append the new image URL to payload
+        ]
+        
+        await syncManager.pushStoreProfileToCloud(storeId: storeId, payload: payload)
+        
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+        
+        isSyncingProfile = false
+        dismiss()
     }
 }

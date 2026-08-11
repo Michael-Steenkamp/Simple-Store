@@ -13,21 +13,33 @@ struct ItemProfileView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(CartManager.self) private var cartManager
     
+    @Environment(SessionManager.self) private var session
+    
     let item: StoreItem
     var previousCustomerID: UUID? = nil
     
     @State private var isShowingEditSheet = false
     @State private var isShowingCheckoutSheet = false
     
-    // Determine if the item is currently in the active cart
     var isItemInCart: Bool {
         cartManager.items.keys.contains(where: { $0.id == item.id })
+    }
+    
+    // MARK: - Role-Based Access Control
+    private var isStaff: Bool {
+        let role = session.currentUser?.role
+        return role == .admin || role == .employee
+    }
+    
+    private var isAdmin: Bool {
+        return session.currentUser?.role == .admin
     }
     
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
                 
+                // MARK: - Cloud-Ready Image Loading
                 ZStack(alignment: .bottomTrailing) {
                     if let imageData = item.imageData, let uiImage = UIImage(data: imageData) {
                         Image(uiImage: uiImage)
@@ -36,6 +48,28 @@ struct ItemProfileView: View {
                             .frame(width: 150, height: 150)
                             .clipShape(Circle())
                             .shadow(radius: 5)
+                    } else if let urlString = item.imageURL, let url = URL(string: urlString) {
+                        // AsyncImage fetches the photo from Firebase if local data is missing
+                        AsyncImage(url: url) { phase in
+                            if let image = phase.image {
+                                image
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 150, height: 150)
+                                    .clipShape(Circle())
+                                    .shadow(radius: 5)
+                            } else if phase.error != nil {
+                                ZStack {
+                                    Circle().fill(Color.gray.opacity(0.2)).frame(width: 150, height: 150)
+                                    Image(systemName: "photo.badge.exclamationmark").font(.system(size: 40)).foregroundColor(.gray)
+                                }
+                            } else {
+                                ZStack {
+                                    Circle().fill(Color.gray.opacity(0.1)).frame(width: 150, height: 150)
+                                    ProgressView()
+                                }
+                            }
+                        }
                     } else {
                         Circle()
                             .fill(Color.gray.opacity(0.2))
@@ -78,6 +112,13 @@ struct ItemProfileView: View {
                         .font(.title2)
                         .foregroundColor(.secondary)
                     
+                    if isAdmin, item.itemCost > 0 {
+                        Text("Cost: \(item.itemCost, format: .currency(code: "CAD"))")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.top, -4)
+                    }
+                    
                     if item.stockCount == 0 {
                         Text("Out of Stock")
                             .font(.caption)
@@ -95,54 +136,56 @@ struct ItemProfileView: View {
                     }
                 }
                 
-                if let quantityInCart = cartManager.items[item] {
-                    HStack(spacing: 20) {
-                        Button(action: { cartManager.remove(item) }) {
-                            Image(systemName: "minus.circle.fill")
-                                .font(.title)
-                                .foregroundColor(.red)
+                if isStaff {
+                    if let quantityInCart = cartManager.items[item] {
+                        HStack(spacing: 20) {
+                            Button(action: { cartManager.remove(item) }) {
+                                Image(systemName: "minus.circle.fill")
+                                    .font(.title)
+                                    .foregroundColor(.red)
+                            }
+                            
+                            VStack(spacing: 2) {
+                                Text("\(quantityInCart) in Cart")
+                                    .font(.headline)
+                                    .fontWeight(.bold)
+                                Text("Total: \(Double(quantityInCart) * item.salesPrice, format: .currency(code: "CAD"))")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(minWidth: 100)
+                            
+                            Button(action: { cartManager.add(item) }) {
+                                Image(systemName: "plus.circle.fill")
+                                    .font(.title)
+                                    .foregroundColor(quantityInCart >= item.stockCount ? .gray : .green)
+                            }
+                            .disabled(quantityInCart >= item.stockCount)
                         }
-                        
-                        VStack(spacing: 2) {
-                            Text("\(quantityInCart) in Cart")
-                                .font(.headline)
-                                .fontWeight(.bold)
-                            Text("Total: \(Double(quantityInCart) * item.salesPrice, format: .currency(code: "CAD"))")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .frame(minWidth: 100)
-                        
-                        Button(action: { cartManager.add(item) }) {
-                            Image(systemName: "plus.circle.fill")
-                                .font(.title)
-                                .foregroundColor(quantityInCart >= item.stockCount ? .gray : .green)
-                        }
-                        .disabled(quantityInCart >= item.stockCount)
-                    }
-                    .padding()
-                    .frame(maxWidth: .infinity)
-                    .background(Color(UIColor.secondarySystemBackground))
-                    .cornerRadius(12)
-                    .padding(.horizontal, 40)
-                } else {
-                    Button(action: {
-                        cartManager.add(item)
-                    }) {
-                        VStack {
-                            Image(systemName: "cart.badge.plus")
-                                .font(.title)
-                            Text("Add to Cart")
-                                .font(.caption)
-                        }
-                        .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color.blue)
-                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .background(Color(UIColor.secondarySystemBackground))
                         .cornerRadius(12)
+                        .padding(.horizontal, 40)
+                    } else {
+                        Button(action: {
+                            cartManager.add(item)
+                        }) {
+                            VStack {
+                                Image(systemName: "cart.badge.plus")
+                                    .font(.title)
+                                Text("Add to Cart")
+                                    .font(.caption)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(12)
+                        }
+                        .disabled(item.stockCount <= 0)
+                        .padding(.horizontal, 100)
                     }
-                    .disabled(item.stockCount <= 0)
-                    .padding(.horizontal, 100)
                 }
                 
                 Divider()
@@ -188,10 +231,12 @@ struct ItemProfileView: View {
                 Divider()
                     .padding(.vertical, 8)
                 
-                ItemSalesHistorySection(
-                    previousCustomerID: previousCustomerID,
-                    currentItemID: item.id.uuidString
-                )
+                if isStaff {
+                    ItemSalesHistorySection(
+                        previousCustomerID: previousCustomerID,
+                        currentItemID: item.id.uuidString
+                    )
+                }
             }
             .padding(.bottom, 40)
         }
@@ -200,14 +245,13 @@ struct ItemProfileView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 16) {
-                    // Conditionally hide the Edit button if the item is in the cart
-                    if !isItemInCart {
+                    if isAdmin && !isItemInCart {
                         Button("Edit") {
                             isShowingEditSheet = true
                         }
                     }
                     
-                    if cartManager.totalItemCount > 0 {
+                    if isStaff && cartManager.totalItemCount > 0 {
                         Button(action: {
                             isShowingCheckoutSheet = true
                         }) {
@@ -229,7 +273,6 @@ struct ItemProfileView: View {
 }
 
 // MARK: - Smart Sales History Sub-View
-
 struct ItemSalesHistorySection: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Transaction.date, order: .reverse) private var allTransactions: [Transaction]

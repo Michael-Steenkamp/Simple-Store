@@ -11,13 +11,16 @@ import SwiftData
 struct InventoryManagerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
+    
+    // NEW: Inject SyncManager
+    @Environment(SyncManager.self) private var syncManager
+    
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
     @State private var searchText = ""
     @State private var isSearchFocused = false
     @State private var isShowingScanner = false
     
-    // NEW: Separated boolean trigger and data payload for the modern alert API
     @State private var isShowingArchiveAlert = false
     @State private var itemToArchiveAlert: StoreItem? = nil
     
@@ -104,7 +107,6 @@ struct InventoryManagerView: View {
         .sheet(isPresented: $isShowingScanner) {
             BarcodeScannerView(scannedCode: $searchText)
         }
-        // Modern iOS 15+ Alert API
         .alert("Item in Cart", isPresented: $isShowingArchiveAlert, presenting: itemToArchiveAlert) { item in
             Button("Cancel", role: .cancel) { }
             Button("Archive & Remove", role: .destructive) {
@@ -114,13 +116,17 @@ struct InventoryManagerView: View {
                     cartManager.items.removeValue(forKey: item)
                     try? modelContext.save()
                 }
+                
+                // NEW: Sync the archival status to the cloud
+                Task {
+                    await syncManager.pushItemToCloud(item)
+                }
             }
         } message: { item in
             Text("This item is currently in your cart. Archiving it will remove it from the active cart. Continue?")
         }
     }
     
-    // Checks if the item needs a warning before archiving
     private func handleArchive(_ item: StoreItem) {
         if cartManager.items.keys.contains(where: { $0.id == item.id }) {
             itemToArchiveAlert = item
@@ -130,6 +136,11 @@ struct InventoryManagerView: View {
                 item.isActive = false
                 item.updatedAt = Date()
                 try? modelContext.save()
+            }
+            
+            // NEW: Sync the archival status to the cloud
+            Task {
+                await syncManager.pushItemToCloud(item)
             }
         }
     }
@@ -178,6 +189,10 @@ struct InventoryRowView: View {
 struct ArchivedInventoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
+    
+    // NEW: Inject SyncManager
+    @Environment(SyncManager.self) private var syncManager
+    
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
     @State private var isShowingDeleteAlert = false
@@ -199,11 +214,7 @@ struct ArchivedInventoryView: View {
                     InventoryRowView(item: item)
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
                             Button {
-                                withAnimation {
-                                    item.isActive = true
-                                    item.updatedAt = Date()
-                                    try? modelContext.save()
-                                }
+                                restoreItem(item)
                             } label: {
                                 Label("Restore", systemImage: "arrow.uturn.backward")
                             }
@@ -221,11 +232,7 @@ struct ArchivedInventoryView: View {
                         }
                         .contextMenu {
                             Button {
-                                withAnimation {
-                                    item.isActive = true
-                                    item.updatedAt = Date()
-                                    try? modelContext.save()
-                                }
+                                restoreItem(item)
                             } label: {
                                 Label("Restore Item", systemImage: "arrow.uturn.backward")
                             }
@@ -256,6 +263,19 @@ struct ArchivedInventoryView: View {
         }
     }
     
+    private func restoreItem(_ item: StoreItem) {
+        withAnimation {
+            item.isActive = true
+            item.updatedAt = Date()
+            try? modelContext.save()
+        }
+        
+        // NEW: Sync the restored status to the cloud
+        Task {
+            await syncManager.pushItemToCloud(item)
+        }
+    }
+    
     private func permanentlyDelete(_ item: StoreItem) {
         item.name = item.name + " (Deleted)"
         item.imageData = nil
@@ -266,5 +286,10 @@ struct ArchivedInventoryView: View {
         
         cartManager.items.removeValue(forKey: item)
         try? modelContext.save()
+        
+        // NEW: Sync the stripped metadata status to the cloud
+        Task {
+            await syncManager.pushItemToCloud(item)
+        }
     }
 }

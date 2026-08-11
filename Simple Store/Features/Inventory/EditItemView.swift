@@ -14,6 +14,9 @@ struct EditItemView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(CartManager.self) private var cartManager
     
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(SessionManager.self) private var session
+    
     let item: StoreItem
     var onDelete: (() -> Void)? = nil
     
@@ -58,7 +61,6 @@ struct EditItemView: View {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && Double(salesPriceString) != nil
     }
     
-    // Live check to adjust the danger zone alerts
     var isInCart: Bool {
         cartManager.items.keys.contains(where: { $0.id == item.id })
     }
@@ -243,7 +245,7 @@ struct EditItemView: View {
                 } else {
                     Button(action: {
                         item.isActive = true
-                        saveChanges()
+                        saveChanges() // This handles the cloud sync automatically
                     }) {
                         Text("Restore to Storefront")
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -286,6 +288,11 @@ struct EditItemView: View {
                 item.updatedAt = Date()
                 cartManager.items.removeValue(forKey: item)
                 try? modelContext.save()
+                
+                Task {
+                    await syncManager.pushItemToCloud(item)
+                }
+                
                 dismiss()
                 onDelete?()
             }
@@ -301,6 +308,7 @@ struct EditItemView: View {
             Button(isInCart ? "Delete & Remove" : "Delete", role: .destructive) {
                 item.name = item.name + " (Deleted)"
                 item.imageData = nil
+                item.imageURL = nil
                 item.tags = []
                 item.barcode = nil
                 item.desc = nil
@@ -308,8 +316,15 @@ struct EditItemView: View {
                 item.updatedAt = Date()
                 
                 cartManager.items.removeValue(forKey: item)
-                
                 try? modelContext.save()
+                
+                Task {
+                    if let storeId = session.currentUser?.storeId {
+                        await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: item.id.uuidString)
+                    }
+                    await syncManager.pushItemToCloud(item)
+                }
+                
                 dismiss()
                 onDelete?()
             }
@@ -337,6 +352,23 @@ struct EditItemView: View {
         item.updatedAt = Date()
         
         try? modelContext.save()
+        
+        // NEW: Sync edits and new images to Firebase Storage
+        Task {
+            if let storeId = session.currentUser?.storeId {
+                if let data = imageData {
+                    if let url = try? await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: item.id.uuidString) {
+                        item.imageURL = url
+                        try? modelContext.save()
+                    }
+                } else {
+                    await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: item.id.uuidString)
+                    item.imageURL = nil
+                    try? modelContext.save()
+                }
+            }
+            await syncManager.pushItemToCloud(item)
+        }
         
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()

@@ -10,6 +10,8 @@ import SwiftData
 
 struct CustomerListView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(SessionManager.self) private var session
+    
     @Query(sort: \Customer.lastName) private var allCustomers: [Customer]
     @Query(sort: \CustomerStatus.name) private var allStatuses: [CustomerStatus]
     
@@ -17,6 +19,10 @@ struct CustomerListView: View {
     @State private var isSearchFocused = false
     @State private var isShowingAddSheet = false
     @State private var selectedFilterStatuses: Set<CustomerStatus> = []
+    
+    private var isAdmin: Bool {
+        session.currentUser?.role == .admin
+    }
     
     var activeCustomers: [Customer] {
         allCustomers.filter { $0.isActive }
@@ -28,23 +34,19 @@ struct CustomerListView: View {
     
     var filteredCustomers: [Customer] {
         var customers = activeCustomers
-        
         if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
             customers = customers.filter { customer in
-                let nameMatch = customer.fullName.localizedCaseInsensitiveContains(searchText)
-                let emailMatch = customer.email.localizedCaseInsensitiveContains(searchText)
-                let phoneMatch = customer.phone.localizedCaseInsensitiveContains(searchText)
-                return nameMatch || emailMatch || phoneMatch
+                customer.fullName.localizedCaseInsensitiveContains(searchText) ||
+                customer.email.localizedCaseInsensitiveContains(searchText) ||
+                customer.phone.localizedCaseInsensitiveContains(searchText)
             }
         }
-        
         if !selectedFilterStatuses.isEmpty {
             customers = customers.filter { customer in
                 guard let status = customer.status else { return false }
                 return selectedFilterStatuses.contains(status)
             }
         }
-        
         return customers
     }
     
@@ -60,47 +62,30 @@ struct CustomerListView: View {
             List {
                 if filteredCustomers.isEmpty {
                     Text(isFilterActive ? "No matching customers found." : "No active customers found.")
-                        .foregroundColor(.secondary)
-                        .italic()
-                        .listRowBackground(Color.clear)
+                        .foregroundColor(.secondary).italic().listRowBackground(Color.clear)
                 } else {
                     ForEach(filteredCustomers) { customer in
                         NavigationLink(destination: CustomerDetailView(customer: customer)) {
                             CustomerCardRowView(customer: customer)
                         }
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                withAnimation {
-                                    archiveCustomer(customer)
-                                }
-                            } label: {
-                                Label("Archive", systemImage: "archivebox")
-                            }
-                            .tint(.red)
-                        }
-                        .contextMenu {
-                            Button(role: .destructive) {
-                                withAnimation {
-                                    archiveCustomer(customer)
-                                }
-                            } label: {
-                                Label("Archive Customer", systemImage: "archivebox")
-                            }
-                        }
+                        // NEW: Strictly restrict swipe-to-archive to Admins
+                        .modifier(AdminCustomerActionModifier(isAdmin: isAdmin, customer: customer, onArchive: {
+                            archiveCustomer(customer)
+                        }))
                     }
                 }
             }
         }
         .navigationTitle("Customers")
         .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search customer name, email, phone...")
-        .sensoryFeedback(.impact(weight: .medium), trigger: activeCustomers.count)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 16) {
-                    NavigationLink(destination: ArchivedCustomersView()) {
-                        Image(systemName: "archivebox")
+                    if isAdmin {
+                        NavigationLink(destination: ArchivedCustomersView()) {
+                            Image(systemName: "archivebox")
+                        }
                     }
-                    
                     Button(action: { isShowingAddSheet = true }) {
                         Image(systemName: "plus")
                     }
@@ -113,9 +98,30 @@ struct CustomerListView: View {
     }
     
     private func archiveCustomer(_ customer: Customer) {
+        guard isAdmin else { return }
         customer.isActive = false
         customer.updatedAt = Date()
         try? modelContext.save()
+    }
+}
+
+// NEW: Helper Modifier for Admin-only archiving permissions
+struct AdminCustomerActionModifier: ViewModifier {
+    let isAdmin: Bool
+    let customer: Customer
+    let onArchive: () -> Void
+    
+    func body(content: Content) -> some View {
+        if isAdmin {
+            content
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) { withAnimation { onArchive() } } label: {
+                        Label("Archive", systemImage: "archivebox")
+                    }.tint(.red)
+                }
+        } else {
+            content
+        }
     }
 }
 

@@ -13,12 +13,40 @@ struct ItemCardView: View {
     var body: some View {
         VStack(spacing: 0) {
             ZStack(alignment: .topTrailing) {
+                
+                // MARK: - Cloud-Ready Image Loading
                 if let data = item.imageData, let uiImage = UIImage(data: data) {
                     Image(uiImage: uiImage)
                         .resizable()
                         .scaledToFill()
                         .frame(height: 110)
                         .clipped()
+                } else if let urlString = item.imageURL, let url = URL(string: urlString) {
+                    // Fetch from cloud if local data is missing
+                    AsyncImage(url: url) { phase in
+                        if let image = phase.image {
+                            image
+                                .resizable()
+                                .scaledToFill()
+                                .frame(height: 110)
+                                .clipped()
+                        } else if phase.error != nil {
+                            Color(UIColor.secondarySystemBackground)
+                                .frame(height: 110)
+                                .overlay(
+                                    Image(systemName: "photo.badge.exclamationmark")
+                                        .foregroundColor(.gray.opacity(0.5))
+                                )
+                                .clipped()
+                        } else {
+                            Color(UIColor.secondarySystemBackground)
+                                .frame(height: 110)
+                                .overlay(
+                                    ProgressView()
+                                )
+                                .clipped()
+                        }
+                    }
                 } else {
                     Color(UIColor.secondarySystemBackground)
                         .frame(height: 110)
