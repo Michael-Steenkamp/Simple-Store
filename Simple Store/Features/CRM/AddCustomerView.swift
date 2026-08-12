@@ -12,6 +12,11 @@ struct AddCustomerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     
+    // NEW: Inject managers to route the customer to the correct tenant and sync
+    @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
+    
     @Query(sort: \CustomerStatus.name) private var allStatuses: [CustomerStatus]
     
     @State private var firstName = ""
@@ -93,6 +98,7 @@ struct AddCustomerView: View {
                         let cleanedPhone = phone.formattedAsPhoneNumber()
                         
                         let newCustomer = Customer(
+                            storeId: session.currentUser?.storeId, // Secure Tenant Tagging
                             firstName: firstName.trimmingCharacters(in: .whitespaces),
                             lastName: lastName.trimmingCharacters(in: .whitespaces),
                             email: email.trimmingCharacters(in: .whitespaces),
@@ -104,6 +110,11 @@ struct AddCustomerView: View {
                         modelContext.insert(newCustomer)
                         newCustomer.status = selectedStatus
                         try? modelContext.save()
+                        
+                        // UPDATED PUSH CALL
+                        Task {
+                            await syncManager.pushCustomerToCloud(newCustomer, context: modelContext, isOnline: networkMonitor.isConnected)
+                        }
                         
                         onSave?(newCustomer)
                         dismiss()

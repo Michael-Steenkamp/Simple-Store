@@ -11,13 +11,17 @@ import SwiftData
 struct InventoryManagerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
+    
+    // NEW: Inject SyncManager & NetworkMonitor
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
+    
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
     @State private var searchText = ""
     @State private var isSearchFocused = false
     @State private var isShowingScanner = false
     
-    // NEW: Separated boolean trigger and data payload for the modern alert API
     @State private var isShowingArchiveAlert = false
     @State private var itemToArchiveAlert: StoreItem? = nil
     
@@ -25,15 +29,17 @@ struct InventoryManagerView: View {
         allItems.filter { $0.isActive }
     }
     
+    // FIX: Simplified the computed property to resolve the compiler timeout
     var filteredItems: [StoreItem] {
-        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespaces)
+        if trimmedSearch.isEmpty {
             return activeItems
-        } else {
-            return activeItems.filter { item in
-                let nameMatch = item.name.localizedCaseInsensitiveContains(searchText)
-                let barcodeMatch = item.barcode?.localizedCaseInsensitiveContains(searchText) ?? false
-                return nameMatch || barcodeMatch
-            }
+        }
+        
+        return activeItems.filter { item in
+            let nameMatch = item.name.localizedCaseInsensitiveContains(trimmedSearch)
+            let barcodeMatch = item.barcode?.localizedCaseInsensitiveContains(trimmedSearch) ?? false
+            return nameMatch || barcodeMatch
         }
     }
     
@@ -104,7 +110,6 @@ struct InventoryManagerView: View {
         .sheet(isPresented: $isShowingScanner) {
             BarcodeScannerView(scannedCode: $searchText)
         }
-        // Modern iOS 15+ Alert API
         .alert("Item in Cart", isPresented: $isShowingArchiveAlert, presenting: itemToArchiveAlert) { item in
             Button("Cancel", role: .cancel) { }
             Button("Archive & Remove", role: .destructive) {
@@ -114,13 +119,17 @@ struct InventoryManagerView: View {
                     cartManager.items.removeValue(forKey: item)
                     try? modelContext.save()
                 }
+                
+                // UPDATED PUSH CALL
+                Task {
+                    await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
+                }
             }
         } message: { item in
             Text("This item is currently in your cart. Archiving it will remove it from the active cart. Continue?")
         }
     }
     
-    // Checks if the item needs a warning before archiving
     private func handleArchive(_ item: StoreItem) {
         if cartManager.items.keys.contains(where: { $0.id == item.id }) {
             itemToArchiveAlert = item
@@ -130,6 +139,11 @@ struct InventoryManagerView: View {
                 item.isActive = false
                 item.updatedAt = Date()
                 try? modelContext.save()
+            }
+            
+            // UPDATED PUSH CALL
+            Task {
+                await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
             }
         }
     }
@@ -178,6 +192,11 @@ struct InventoryRowView: View {
 struct ArchivedInventoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
+    
+    // NEW: Inject SyncManager & NetworkMonitor
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
+    
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
     @State private var isShowingDeleteAlert = false
@@ -199,11 +218,7 @@ struct ArchivedInventoryView: View {
                     InventoryRowView(item: item)
                         .swipeActions(edge: .leading, allowsFullSwipe: true) {
                             Button {
-                                withAnimation {
-                                    item.isActive = true
-                                    item.updatedAt = Date()
-                                    try? modelContext.save()
-                                }
+                                restoreItem(item)
                             } label: {
                                 Label("Restore", systemImage: "arrow.uturn.backward")
                             }
@@ -221,11 +236,7 @@ struct ArchivedInventoryView: View {
                         }
                         .contextMenu {
                             Button {
-                                withAnimation {
-                                    item.isActive = true
-                                    item.updatedAt = Date()
-                                    try? modelContext.save()
-                                }
+                                restoreItem(item)
                             } label: {
                                 Label("Restore Item", systemImage: "arrow.uturn.backward")
                             }
@@ -256,6 +267,19 @@ struct ArchivedInventoryView: View {
         }
     }
     
+    private func restoreItem(_ item: StoreItem) {
+        withAnimation {
+            item.isActive = true
+            item.updatedAt = Date()
+            try? modelContext.save()
+        }
+        
+        // UPDATED PUSH CALL
+        Task {
+            await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
+        }
+    }
+    
     private func permanentlyDelete(_ item: StoreItem) {
         item.name = item.name + " (Deleted)"
         item.imageData = nil
@@ -266,5 +290,10 @@ struct ArchivedInventoryView: View {
         
         cartManager.items.removeValue(forKey: item)
         try? modelContext.save()
+        
+        // UPDATED PUSH CALL
+        Task {
+            await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
+        }
     }
 }

@@ -10,13 +10,21 @@ import SwiftData
 
 struct EmployeeManagementView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(SessionManager.self) private var session
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \Employee.name) private var allEmployees: [Employee]
     
     @State private var searchText = ""
     @State private var isSearchFocused = false
     @State private var isShowingAddSheet = false
-    @State private var isShowingEmployeeId = false
+    
+    @State private var adminNames: [String] = []
+    
+    private var isAdmin: Bool {
+        session.currentUser?.role == .admin
+    }
     
     var activeEmployees: [Employee] {
         allEmployees.filter { $0.isActive }
@@ -30,89 +38,107 @@ struct EmployeeManagementView: View {
         }
     }
     
+    var pinnedAdmins: [Employee] {
+        filteredEmployees.filter { adminNames.contains($0.name) }
+    }
+    
+    var regularStaff: [Employee] {
+        filteredEmployees.filter { !adminNames.contains($0.name) }
+    }
+    
     var body: some View {
         Group {
             if activeEmployees.isEmpty {
-                ContentUnavailableView(
-                    "No Employees Yet",
-                    systemImage: "lanyardcard",
-                    description: Text("Add your team members to track who processes each transaction.")
-                )
+                ContentUnavailableView("No Employees Yet", systemImage: "lanyardcard")
             } else {
                 List {
-                    ForEach(filteredEmployees) { employee in
-                        HStack {
-                            Text(employee.name)
-                                .font(.headline)
-                            
-                            Spacer()
-                            
-                            Button {
-                                isShowingEmployeeId = true
-                            } label: {
-                                Image(systemName: "person.crop.circle")
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .padding(.vertical, 4)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button(role: .destructive) {
-                                withAnimation {
-                                    archiveEmployee(employee)
+                    if !pinnedAdmins.isEmpty {
+                        Section(header: Text("Administrators")) {
+                            ForEach(pinnedAdmins) { admin in
+                                NavigationLink(destination: EmployeeDetailView(employee: admin)) {
+                                    EmployeeRowView(employee: admin, isPinnedAdmin: true)
                                 }
-                            } label: {
-                                Label("Archive", systemImage: "archivebox")
-                            }
-                        }
-                        // Apple Best Practice: Duplicate swipe action in context menu
-                        .contextMenu {
-                            Button {
-                                isShowingEmployeeId = true
-                            } label: {
-                                Label("View ID", systemImage: "person.crop.circle")
-                            }
-                            
-                            Button(role: .destructive) {
-                                withAnimation {
-                                    archiveEmployee(employee)
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) { archiveEmployee(admin) } label: { Label("Archive", systemImage: "archivebox") }
                                 }
-                            } label: {
-                                Label("Archive Employee", systemImage: "archivebox")
                             }
                         }
-                        .alert("\(employee.name)'s ID", isPresented: $isShowingEmployeeId) {
-                            Button("OK", role: .cancel) {}
-                        } message: {
-                            Text("\(employee.id)")
+                    }
+                    
+                    if !regularStaff.isEmpty {
+                        Section(header: Text("Staff")) {
+                            ForEach(regularStaff) { staff in
+                                NavigationLink(destination: EmployeeDetailView(employee: staff)) {
+                                    EmployeeRowView(employee: staff, isPinnedAdmin: false)
+                                }
+                                .swipeActions(edge: .leading) {
+                                    if isAdmin {
+                                        Button { promoteToAdmin(staff) } label: { Label("Make Admin", systemImage: "star.fill") }
+                                        .tint(.yellow)
+                                    }
+                                }
+                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                    Button(role: .destructive) { archiveEmployee(staff) } label: { Label("Archive", systemImage: "archivebox") }
+                                }
+                            }
                         }
                     }
                 }
                 .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search employees by name...")
-                .sensoryFeedback(.impact(weight: .medium), trigger: activeEmployees.count)
             }
         }
         .navigationTitle("Employee Directory")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 16) {
-                    NavigationLink(destination: ArchivedEmployeesView()) {
-                        Image(systemName: "archivebox")
-                    }
-                    
-                    Button(action: { isShowingAddSheet = true }) {
-                        Image(systemName: "plus")
+                    if isAdmin {
+                        NavigationLink(destination: ArchivedEmployeesView()) { Image(systemName: "archivebox") }
+                        Button(action: { isShowingAddSheet = true }) { Image(systemName: "plus") }
                     }
                 }
             }
         }
-        .sheet(isPresented: $isShowingAddSheet) {
-            AddEmployeeView()
+        .sheet(isPresented: $isShowingAddSheet) { AddEmployeeView() }
+        .task {
+            adminNames = await session.fetchStoreAdminNames()
+        }
+    }
+    
+    private func promoteToAdmin(_ employee: Employee) {
+        Task {
+            do {
+                try await session.promoteEmployeeToAdmin(employeeName: employee.name)
+                withAnimation { adminNames.append(employee.name) }
+            } catch {
+                print(error.localizedDescription)
+            }
         }
     }
     
     private func archiveEmployee(_ employee: Employee) {
+        guard isAdmin else { return }
         employee.isActive = false
         try? modelContext.save()
+        // UPDATED PUSH CALL
+        Task { await syncManager.pushEmployeeToCloud(employee, context: modelContext, isOnline: networkMonitor.isConnected) }
+    }
+}
+
+struct EmployeeRowView: View {
+    let employee: Employee
+    let isPinnedAdmin: Bool
+    
+    var body: some View {
+        HStack {
+            Text(employee.name).font(.headline)
+            Spacer()
+            if isPinnedAdmin {
+                Image(systemName: "star.fill")
+                    .foregroundColor(.yellow)
+                    .font(.caption)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -120,6 +146,11 @@ struct EmployeeManagementView: View {
 struct AddEmployeeView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    
+    @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
+    
     @State private var name: String = ""
     var body: some View {
         NavigationStack {
@@ -134,9 +165,15 @@ struct AddEmployeeView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        let newEmployee = Employee(name: name)
+                        let newEmployee = Employee(
+                            storeId: session.currentUser?.storeId,
+                            name: name
+                        )
                         modelContext.insert(newEmployee)
                         try? modelContext.save()
+                        
+                        // UPDATED PUSH CALL
+                        Task { await syncManager.pushEmployeeToCloud(newEmployee, context: modelContext, isOnline: networkMonitor.isConnected) }
                         dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -149,6 +186,8 @@ struct AddEmployeeView: View {
 // MARK: - Archived Employees View
 struct ArchivedEmployeesView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \Employee.name) private var allEmployees: [Employee]
     
@@ -175,9 +214,7 @@ struct ArchivedEmployeesView: View {
                     .padding(.vertical, 4)
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
                         Button {
-                            withAnimation {
-                                restoreEmployee(employee)
-                            }
+                            withAnimation { restoreEmployee(employee) }
                         } label: {
                             Label("Restore", systemImage: "arrow.uturn.backward")
                         }
@@ -185,27 +222,20 @@ struct ArchivedEmployeesView: View {
                     }
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
-                            withAnimation {
-                                permanentlyDelete(employee)
-                            }
+                            withAnimation { permanentlyDelete(employee) }
                         } label: {
                             Label("Delete", systemImage: "trash")
                         }
                     }
-                    // Apple Best Practice: Context Menu for Archived Items
                     .contextMenu {
                         Button {
-                            withAnimation {
-                                restoreEmployee(employee)
-                            }
+                            withAnimation { restoreEmployee(employee) }
                         } label: {
                             Label("Restore Employee", systemImage: "arrow.uturn.backward")
                         }
                         
                         Button(role: .destructive) {
-                            withAnimation {
-                                permanentlyDelete(employee)
-                            }
+                            withAnimation { permanentlyDelete(employee) }
                         } label: {
                             Label("Delete Forever", systemImage: "trash")
                         }
@@ -220,10 +250,17 @@ struct ArchivedEmployeesView: View {
     private func restoreEmployee(_ employee: Employee) {
         employee.isActive = true
         try? modelContext.save()
+        // UPDATED PUSH CALL
+        Task { await syncManager.pushEmployeeToCloud(employee, context: modelContext, isOnline: networkMonitor.isConnected) }
     }
     
     private func permanentlyDelete(_ employee: Employee) {
-        modelContext.delete(employee)
-        try? modelContext.save()
+        employee.isActive = false
+        Task {
+            // UPDATED PUSH CALL
+            await syncManager.pushEmployeeToCloud(employee, context: modelContext, isOnline: networkMonitor.isConnected)
+            modelContext.delete(employee)
+            try? modelContext.save()
+        }
     }
 }

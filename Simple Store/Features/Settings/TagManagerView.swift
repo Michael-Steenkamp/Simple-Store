@@ -1,6 +1,6 @@
 //
 //  TagManagerView.swift
-//  Simple Inventory
+//  Simple Store
 //
 
 import SwiftUI
@@ -9,6 +9,11 @@ import SwiftData
 struct TagManagerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    
+    // NEW: Inject global managers for cloud sync
+    @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \ItemTag.name) private var allTags: [ItemTag]
     @Query(sort: \CustomerStatus.name) private var allStatuses: [CustomerStatus]
@@ -43,7 +48,6 @@ struct TagManagerView: View {
             }
             
             List {
-                // MARK: - Input Section
                 Section(header: Text(selectedTab == 0 ? "Create New Tag" : "Create New Status")) {
                     HStack {
                         TextField(selectedTab == 0 ? "e.g. Sale, New, Clearance..." : "e.g. Regular, VIP, Wholesale...", text: $newItemName)
@@ -60,7 +64,6 @@ struct TagManagerView: View {
                     }
                 }
                 
-                // MARK: - Data List
                 Section(header: Text(selectedTab == 0 ? "Available Tags" : "Available Statuses")) {
                     if selectedTab == 0 {
                         if allTags.isEmpty {
@@ -154,14 +157,22 @@ struct TagManagerView: View {
         
         if selectedTab == 0 {
             if !allTags.contains(where: { $0.name.lowercased() == trimmedName.lowercased() }) {
-                let newTag = ItemTag(name: trimmedName)
+                // NEW: Inject storeId
+                let newTag = ItemTag(storeId: session.currentUser?.storeId, name: trimmedName)
                 modelContext.insert(newTag)
                 if isSelectionMode { selectedTags.append(newTag) }
+                
+                // UPDATED PUSH CALL
+                Task { await syncManager.pushItemTagToCloud(newTag, context: modelContext, isOnline: networkMonitor.isConnected) }
             }
         } else {
             if !allStatuses.contains(where: { $0.name.lowercased() == trimmedName.lowercased() }) {
-                let newStatus = CustomerStatus(name: trimmedName)
+                // Fixed: Added the explicitly required storeId argument
+                let newStatus = CustomerStatus(id: UUID(), name: trimmedName, storeId: session.currentUser?.storeId)
                 modelContext.insert(newStatus)
+                
+                // UPDATED PUSH CALL
+                Task { await syncManager.pushCustomerStatusToCloud(newStatus, context: modelContext, isOnline: networkMonitor.isConnected) }
             }
         }
         
@@ -181,12 +192,23 @@ struct TagManagerView: View {
         if let index = selectedTags.firstIndex(of: tag) {
             selectedTags.remove(at: index)
         }
+        
+        // UPDATED PUSH CALL
+        let tagId = tag.id.uuidString
+        let storeId = tag.storeId ?? session.currentUser?.storeId ?? ""
+        Task { await syncManager.deleteItemTagFromCloud(tagId, storeId: storeId, context: modelContext, isOnline: networkMonitor.isConnected) }
+        
         modelContext.delete(tag)
         try? modelContext.save()
         tagToDelete = nil
     }
     
     private func deleteStatus(_ status: CustomerStatus) {
+        // UPDATED PUSH CALL
+        let statusId = status.id.uuidString
+        let storeId = status.storeId ?? session.currentUser?.storeId ?? ""
+        Task { await syncManager.deleteCustomerStatusFromCloud(statusId, storeId: storeId, context: modelContext, isOnline: networkMonitor.isConnected) }
+        
         modelContext.delete(status)
         try? modelContext.save()
         statusToDelete = nil

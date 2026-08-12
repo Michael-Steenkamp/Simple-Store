@@ -7,14 +7,20 @@
 
 import SwiftUI
 import SwiftData
+import FirebaseFirestore
 
 struct StorefrontView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
     
+    @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor
+    
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     @Query(sort: \ItemTag.name) private var allTags: [ItemTag]
     @AppStorage("storeName") private var storeName: String = "Your Store Name"
+    @State private var logoData: Data? = UserDefaults.standard.data(forKey: "storeLogo")
     
     @State private var searchText = ""
     @State private var showInStockOnly = false
@@ -27,16 +33,24 @@ struct StorefrontView: View {
     @State private var navigateToSettings = false
     @State private var navigateToAddItem = false
     
-    // NEW: Programmatic navigation state for the isolated tap gesture
+    @State private var isShowingUserProfile = false
+    @State private var isShowingStoreInfo = false
+    
     @State private var selectedProfileItem: StoreItem? = nil
     
+    // MARK: - Role-Based Access Control
+    private var isStaff: Bool {
+        let role = session.currentUser?.role
+        return role == .admin || role == .employee
+    }
+    
+    // MARK: - Filtering Logic
     var isFilterActive: Bool {
         !searchText.isEmpty || showInStockOnly || showOutOfStockOnly || !selectedFilterTags.isEmpty
     }
     
     var filteredItems: [StoreItem] {
         var items = allItems.filter { $0.isActive }
-        
         if !searchText.trimmingCharacters(in: .whitespaces).isEmpty {
             items = items.filter { item in
                 let nameMatches = item.name.localizedCaseInsensitiveContains(searchText)
@@ -44,20 +58,17 @@ struct StorefrontView: View {
                 return nameMatches || barcodeMatches
             }
         }
-        
         if showInStockOnly {
             items = items.filter { $0.stockCount > 0 }
         } else if showOutOfStockOnly {
             items = items.filter { $0.stockCount <= 0 }
         }
-        
         if !selectedFilterTags.isEmpty {
             items = items.filter { item in
                 guard let itemTags = item.tags else { return false }
                 return !Set(itemTags).isDisjoint(with: selectedFilterTags)
             }
         }
-        
         return items
     }
     
@@ -77,19 +88,17 @@ struct StorefrontView: View {
                         isFilterActive: isFilterActive
                     )
                     
+                    // MARK: - Cleaned up ScrollView
                     ScrollView {
-                        if filteredItems.isEmpty {
+                        if filteredItems.isEmpty && !syncManager.isSyncing {
                             emptyStateView
                         } else {
                             LazyVGrid(columns: columns, spacing: 16) {
                                 ForEach(filteredItems) { item in
                                     ItemCardView(item: item)
-                                        // 1. Isolated Tap to Navigate
-                                        .onTapGesture {
-                                            selectedProfileItem = item
-                                        }
-                                        // 2. Isolated Long Press to Quick Add
+                                        .onTapGesture { if isStaff { selectedProfileItem = item } }
                                         .onLongPressGesture(minimumDuration: 0.4) {
+                                            guard isStaff else { return }
                                             let currentQty = cartManager.items[item] ?? 0
                                             if currentQty < item.stockCount {
                                                 cartManager.items[item] = currentQty + 1
@@ -101,58 +110,21 @@ struct StorefrontView: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.top, 16)
-                            .padding(.bottom, cartManager.totalItemCount > 0 ? 100 : 20)
-                        }
-                    }
-                    .overlay(alignment: .bottom) {
-                        if cartManager.totalItemCount > 0 {
-                            Button(action: {
-                                isShowingCheckout = true
-                            }) {
-                                HStack(spacing: 12) {
-                                    ZStack {
-                                        Image(systemName: "cart.fill")
-                                            .font(.title2)
-                                        
-                                        Text("\(cartManager.totalItemCount)")
-                                            .font(.caption2)
-                                            .fontWeight(.bold)
-                                            .foregroundColor(.blue)
-                                            .frame(width: 18, height: 18)
-                                            .background(Color.white)
-                                            .clipShape(Circle())
-                                            .offset(x: 12, y: -10)
-                                    }
-                                    
-                                    Text("Checkout • \(cartManager.totalAmount, format: .currency(code: "CAD"))")
-                                        .fontWeight(.bold)
-                                }
-                                .padding(.horizontal, 20)
-                                .padding(.vertical, 16)
-                                .background(Color.blue)
-                                .foregroundColor(.white)
-                                .clipShape(Capsule())
-                                .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
-                            }
-                            .padding(.bottom, 20)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
-                            .sensoryFeedback(.success, trigger: cartManager.totalItemCount)
+                            .padding(.bottom, cartManager.totalItemCount > 0 && isStaff ? 100 : 20)
                         }
                     }
                 }
+                .withOfflineBanner()
                 .overlay(alignment: .bottomTrailing) {
+                    // UNIVERSAL BARCODE SCANNER
                     Button(action: { isShowingScanner = true }) {
                         Image(systemName: "barcode.viewfinder")
-                            .font(.title)
-                            .foregroundColor(.primary)
-                            .padding(18)
-                            .background(.ultraThinMaterial)
-                            .clipShape(Circle())
+                            .font(.title).foregroundColor(.primary)
+                            .padding(18).background(.ultraThinMaterial).clipShape(Circle())
                             .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
                     }
                     .padding(.trailing, 20)
-                    .padding(.bottom, cartManager.totalItemCount > 0 ? 100 : 20)
+                    .padding(.bottom, (cartManager.totalItemCount > 0 && isStaff) ? 100 : 20)
                     .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
                     .sensoryFeedback(.selection, trigger: isShowingScanner)
                 }
@@ -160,12 +132,20 @@ struct StorefrontView: View {
                 .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search name or barcode...")
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
-                        Button(action: {
-                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                navigateToSettings = true
+                        if isStaff {
+                            Button(action: {
+                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                    navigateToSettings = true
+                                }
+                            }) {
+                                Image(systemName: "gearshape.fill")
                             }
-                        }) {
-                            Image(systemName: "gearshape.fill")
+                        } else {
+                            Button(action: { isShowingUserProfile = true }) {
+                                Image(systemName: "person.crop.circle")
+                                    .font(.title2)
+                                    .foregroundColor(.blue)
+                            }
                         }
                     }
                     
@@ -176,12 +156,49 @@ struct StorefrontView: View {
                     }
                     
                     ToolbarItem(placement: .primaryAction) {
-                        Button(action: { navigateToAddItem = true }) {
-                            Image(systemName: "plus")
+                        if isStaff {
+                            Button(action: { navigateToAddItem = true }) {
+                                Image(systemName: "plus")
+                            }
+                        } else {
+                            Button(action: { isShowingStoreInfo = true }) {
+                                if let data = logoData, let uiImage = UIImage(data: data) {
+                                    Image(uiImage: uiImage)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 30, height: 30)
+                                        .clipShape(Circle())
+                                } else {
+                                    Image(systemName: "info.circle")
+                                        .foregroundColor(.blue)
+                                }
+                            }
                         }
                     }
                 }
-                // Safely handles routing to the item profile triggered by the tap gesture
+                // MARK: - Frosted Glass Loading Screen Overlay
+                // Note how this sits at the root of the NavigationStack, completely outside of the .toolbar modifier
+                .overlay {
+                    if syncManager.isSyncing && allItems.isEmpty {
+                        ZStack {
+                            Rectangle()
+                                .fill(.ultraThinMaterial)
+                                .ignoresSafeArea()
+                            
+                            VStack(spacing: 20) {
+                                ProgressView()
+                                    .scaleEffect(1.5)
+                                
+                                Text("Entering Workspace...")
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                // Animates the frosted glass fading in and out smoothly
+                .animation(.easeInOut(duration: 0.4), value: syncManager.isSyncing)
                 .navigationDestination(item: $selectedProfileItem) { item in
                     ItemProfileView(item: item)
                 }
@@ -194,33 +211,55 @@ struct StorefrontView: View {
                 .sheet(isPresented: $isShowingScanner) {
                     BarcodeScannerView(scannedCode: $searchText)
                 }
+                .sheet(isPresented: $isShowingUserProfile) {
+                    UserProfileView()
+                }
+                .sheet(isPresented: $isShowingStoreInfo) {
+                    CustomerStoreInfoView()
+                }
+                .onAppear {
+                    logoData = UserDefaults.standard.data(forKey: "storeLogo")
+                }
                 .overlay(alignment: .leading) {
-                    Color.clear
-                        .frame(width: 30)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 20)
-                                .onEnded { value in
+                    if isStaff {
+                        Color.clear
+                            .frame(width: 30)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 20).onEnded { value in
                                     if value.translation.width > 40 && abs(value.translation.height) < 50 {
-                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                            navigateToSettings = true
-                                        }
+                                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { navigateToSettings = true }
                                     }
                                 }
-                        )
+                            )
+                    }
                 }
                 .overlay(alignment: .trailing) {
-                    Color.clear
-                        .frame(width: 30)
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 20)
-                                .onEnded { value in
+                    if isStaff {
+                        Color.clear
+                            .frame(width: 30)
+                            .contentShape(Rectangle())
+                            .gesture(
+                                DragGesture(minimumDistance: 20).onEnded { value in
                                     if value.translation.width < -40 && abs(value.translation.height) < 50 {
                                         navigateToAddItem = true
                                     }
                                 }
-                        )
+                            )
+                    }
+                }
+            }
+            .task {
+                if let storeId = session.currentUser?.storeId {
+                    syncManager.startListening(storeId: storeId, context: modelContext)
+                    await fetchStoreProfile(storeId: storeId)
+                }
+            }
+            .onChange(of: networkMonitor.isConnected) { _, isConnected in
+                if isConnected {
+                    Task {
+                        await syncManager.processOfflineQueue(context: modelContext)
+                    }
                 }
             }
             
@@ -231,6 +270,36 @@ struct StorefrontView: View {
                 .transition(.move(edge: .leading))
                 .zIndex(2)
             }
+        }
+    }
+    
+    // MARK: - Store Profile Sync
+    private func fetchStoreProfile(storeId: String) async {
+        let db = Firestore.firestore()
+        do {
+            let doc = try await db.collection("stores").document(storeId).getDocument()
+            if let data = doc.data() {
+                // Update AppStorage & UserDefaults cache
+                if let name = data["storeName"] as? String { storeName = name }
+                UserDefaults.standard.set(data["storeEmail"] as? String ?? "", forKey: "storeEmail")
+                UserDefaults.standard.set(data["storePhone"] as? String ?? "", forKey: "storePhone")
+                UserDefaults.standard.set(data["storeAddress"] as? String ?? "", forKey: "storeAddress")
+                UserDefaults.standard.set(data["storeWebsite"] as? String ?? "", forKey: "storeWebsite")
+                UserDefaults.standard.set(data["receiptReturnPolicy"] as? String ?? "", forKey: "receiptReturnPolicy")
+                
+                // Fetch and cache the new store logo
+                if let logoURLString = data["storeLogoURL"] as? String, let url = URL(string: logoURLString) {
+                    if let (imageData, _) = try? await URLSession.shared.data(from: url) {
+                        UserDefaults.standard.set(imageData, forKey: "storeLogo")
+                        self.logoData = imageData
+                    }
+                } else {
+                    UserDefaults.standard.removeObject(forKey: "storeLogo")
+                    self.logoData = nil
+                }
+            }
+        } catch {
+            print("Failed to sync store profile: \(error.localizedDescription)")
         }
     }
     
@@ -262,6 +331,94 @@ struct StorefrontView: View {
             }
         }
         .padding(.top, 60)
+    }
+}
+
+// MARK: - Customer Store Info View Component
+struct CustomerStoreInfoView: View {
+    @Environment(\.dismiss) private var dismiss
+    
+    @AppStorage("storeName") private var storeName: String = "Your Store Name"
+    @AppStorage("storeEmail") private var storeEmail: String = ""
+    @AppStorage("storePhone") private var storePhone: String = ""
+    @AppStorage("storeAddress") private var storeAddress: String = ""
+    @AppStorage("storeWebsite") private var storeWebsite: String = ""
+    @AppStorage("receiptReturnPolicy") private var receiptReturnPolicy: String = ""
+    
+    @State private var logoData: Data? = UserDefaults.standard.data(forKey: "storeLogo")
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    VStack(spacing: 16) {
+                        if let data = logoData, let uiImage = UIImage(data: data) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 100, height: 100)
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
+                        } else {
+                            Image(systemName: "storefront.circle.fill")
+                                .resizable()
+                                .frame(width: 100, height: 100)
+                                .foregroundColor(Color(UIColor.systemGray4))
+                        }
+                        
+                        Text(storeName)
+                            .font(.title2)
+                            .fontWeight(.bold)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .listRowBackground(Color.clear)
+                }
+                
+                Section(header: Text("Contact Us")) {
+                    if !storeEmail.isEmpty {
+                        HStack {
+                            Image(systemName: "envelope.fill").foregroundColor(.blue).frame(width: 24)
+                            Text(storeEmail)
+                        }
+                    }
+                    if !storePhone.isEmpty {
+                        HStack {
+                            Image(systemName: "phone.fill").foregroundColor(.green).frame(width: 24)
+                            Text(storePhone)
+                        }
+                    }
+                    if !storeAddress.isEmpty {
+                        HStack(alignment: .top) {
+                            Image(systemName: "mappin.and.ellipse").foregroundColor(.red).frame(width: 24)
+                            Text(storeAddress)
+                        }
+                    }
+                    if !storeWebsite.isEmpty {
+                        HStack {
+                            Image(systemName: "link").foregroundColor(.purple).frame(width: 24)
+                            Text(storeWebsite)
+                        }
+                    }
+                }
+                
+                if !receiptReturnPolicy.trimmingCharacters(in: .whitespaces).isEmpty {
+                    Section(header: Text("Store Policy")) {
+                        Text(receiptReturnPolicy)
+                            .font(.body)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .navigationTitle("About Us")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
     }
 }
 
