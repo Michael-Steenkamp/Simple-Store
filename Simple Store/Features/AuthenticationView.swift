@@ -146,7 +146,19 @@ struct AuthenticationView: View {
             let result = try await Auth.auth().createUser(withEmail: email, password: password)
             let uid = result.user.uid
             
-            let newUser = AppUser(id: uid, email: email, role: .guest, storeId: nil, name: fullName)
+            // NEW: Initialize with multi-tenant workspace arrays instead of single roles
+            let newUser = AppUser(
+                id: uid,
+                name: fullName,
+                email: email,
+                phone: "",
+                isSystemAdmin: false,
+                storeIds: [],
+                storeRoles: [:],
+                activeStoreId: nil,
+                autoJoinStoreId: nil
+            )
+            
             let db = Firestore.firestore()
             try await db.collection("users").document(uid).setData(try Firestore.Encoder().encode(newUser))
             

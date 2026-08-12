@@ -6,29 +6,42 @@
 //
 
 import Foundation
+import FirebaseFirestore
 
-/// Defines the permission levels across the application for a specific store.
-enum UserRole: String, Codable {
-    case admin
-    case employee
-    case customer
-    case guest
+struct AppUser: Codable, Identifiable {
+    @DocumentID var id: String?
+    var name: String
+    var email: String?
+    var phone: String?
+    var isSystemAdmin: Bool = false
+    
+    // MARK: - Multi-Tenant Data
+    var storeIds: [String] = []
+    var storeRoles: [String: String] = [:] // Example: ["storeA": "admin", "storeB": "customer"]
+    var activeStoreId: String?
+    
+    var autoJoinStoreId: String?
+    
+    // MARK: - Backward Compatibility
+    // This ensures all our existing `session.currentUser?.role == .admin` checks still work perfectly!
+    var storeId: String? {
+        get { activeStoreId }
+        set { activeStoreId = newValue }
+    }
+    
+    var role: UserRole {
+        get {
+            guard let active = activeStoreId, let roleString = storeRoles[active] else { return .guest }
+            return UserRole(rawValue: roleString) ?? .guest
+        }
+        set {
+            if let active = activeStoreId {
+                storeRoles[active] = newValue.rawValue
+            }
+        }
+    }
 }
 
-/// Represents an authenticated user in the Simple Store ecosystem.
-struct AppUser: Identifiable, Codable {
-    let id: String
-    var email: String?
-    var role: UserRole
-    var storeId: String?
-    var name: String
-    var phone: String?
-    
-    /// A hidden flag used exclusively to bypass StoreKit subscriptions for the developer.
-    /// Default is false. You will manually set this to `true` for your own account in the Firebase Console.
-    var isSystemAdmin: Bool?
-    
-    var isGuest: Bool {
-        return role == .guest
-    }
+enum UserRole: String, Codable {
+    case admin, employee, customer, guest
 }

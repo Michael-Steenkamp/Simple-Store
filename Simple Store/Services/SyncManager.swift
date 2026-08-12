@@ -22,12 +22,21 @@ final class SyncManager {
     private var tagsListener: ListenerRegistration?
     private var statusesListener: ListenerRegistration?
     
+    // MARK: - Multi-Tenant State
+    private var currentTrackedStoreId: String?
+    
     var isSyncing: Bool = false
     var lastSyncError: String?
     
     // MARK: - App Lifecycle & Listeners
     
     func startListening(storeId: String, context: ModelContext) {
+        // NEW: Check if the workspace changed. If so, wipe the local cache to prevent data bleeding.
+        if currentTrackedStoreId != storeId {
+            clearLocalDatabase(context: context)
+            currentTrackedStoreId = storeId
+        }
+        
         stopAllListeners()
         isSyncing = true
         
@@ -109,6 +118,29 @@ final class SyncManager {
         tagsListener?.remove()
         statusesListener?.remove()
         isSyncing = false
+    }
+    
+    // MARK: - Workspace Memory Wipe
+    
+    private func clearLocalDatabase(context: ModelContext) {
+        do {
+            // SwiftData bulk deletion removes all cached offline data for these models
+            try context.delete(model: StoreItem.self)
+            try context.delete(model: Customer.self)
+            try context.delete(model: Employee.self)
+            try context.delete(model: Transaction.self)
+            try context.delete(model: ItemTag.self)
+            try context.delete(model: CustomerStatus.self)
+            
+            // Sub-models for transactions
+            try context.delete(model: LineItem.self)
+            try context.delete(model: PaymentSplit.self)
+            
+            try context.save()
+            print("Successfully wiped local cache for workspace transition.")
+        } catch {
+            print("Failed to clear local database: \(error.localizedDescription)")
+        }
     }
     
     // MARK: - Incoming Data Processors (Cloud -> Local)
@@ -217,7 +249,6 @@ final class SyncManager {
                 employeeName: data["employeeName"] as? String,
                 employeeId: data["employeeId"] as? String,
                 customer: nil, // Reconstructed below
-                // NEW: Load incoming staff buyer data
                 buyerEmployeeName: data["buyerEmployeeName"] as? String,
                 buyerEmployeeId: data["buyerEmployeeId"] as? String
             )
@@ -334,7 +365,6 @@ final class SyncManager {
                 "employeeName": transaction.employeeName ?? "",
                 "employeeId": transaction.employeeId ?? "",
                 "customerId": transaction.customer?.id.uuidString ?? "",
-                // NEW: Staff Buyer Sync
                 "buyerEmployeeName": transaction.buyerEmployeeName ?? "",
                 "buyerEmployeeId": transaction.buyerEmployeeId ?? "",
                 "lineItems": lineItemsData,

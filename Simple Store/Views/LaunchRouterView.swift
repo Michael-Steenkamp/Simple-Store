@@ -2,38 +2,49 @@
 //  LaunchRouterView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-08-10.
-//
 
 import SwiftUI
 
-/// The root view of the application that handles conditional routing.
 struct LaunchRouterView: View {
     @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
+    
+    // Controls the global visibility of the splash screen (only true on initial app launch)
+    @State private var showSplash = true
     
     var body: some View {
-        Group {
-            if session.isLoading {
-                SplashScreenView()
-            } else if let user = session.currentUser {
-                if user.storeId == nil {
-                    // User is authenticated but hasn't joined or created a store
-                    StoreSelectionView()
-                } else {
-                    switch user.role {
-                    case .admin, .employee:
-                        StorefrontView()
-                    case .customer, .guest:
-                        StorefrontView()
+        ZStack {
+            // MARK: - Main Application Content
+            if let user = session.currentUser {
+                if user.activeStoreId == nil {
+                    if user.storeIds.isEmpty {
+                        StoreSelectionView()
+                    } else {
+                        MyStoresView(isPresentedFromProfile: false)
                     }
+                } else {
+                    StorefrontView()
+                        .id(user.activeStoreId)
+                        .transition(.opacity)
                 }
             } else {
-                // Unauthenticated state
                 AuthenticationView()
             }
+            
+            // MARK: - Global Splash Screen Overlay (Cold Boot Only)
+            if showSplash {
+                SplashScreenView(isPresented: $showSplash)
+                    .zIndex(2)
+                    .transition(.opacity)
+            }
         }
-        // Accessibility support for VoiceOver to announce when routing changes
         .accessibilityElement(children: .contain)
-        .accessibilityLabel(session.isLoading ? "Loading Application" : "Simple Store Application")
+        .accessibilityLabel(session.isLoading || showSplash ? "Loading Application" : "Simple Store Application")
+        .task {
+            // Initial App Launch Sequence
+            try? await Task.sleep(for: .seconds(1.5))
+            while session.isLoading { try? await Task.sleep(for: .milliseconds(100)) }
+            withAnimation(.easeInOut(duration: 0.5)) { showSplash = false }
+        }
     }
 }
