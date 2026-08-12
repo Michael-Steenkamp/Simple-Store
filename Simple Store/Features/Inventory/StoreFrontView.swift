@@ -7,6 +7,7 @@
 
 import SwiftUI
 import SwiftData
+import FirebaseFirestore
 
 struct StorefrontView: View {
     @Environment(\.modelContext) private var modelContext
@@ -86,18 +87,15 @@ struct StorefrontView: View {
                         isFilterActive: isFilterActive
                     )
                     
+                    // MARK: - Cleaned up ScrollView
                     ScrollView {
-                        if filteredItems.isEmpty {
+                        if filteredItems.isEmpty && !syncManager.isSyncing {
                             emptyStateView
                         } else {
                             LazyVGrid(columns: columns, spacing: 16) {
                                 ForEach(filteredItems) { item in
                                     ItemCardView(item: item)
-                                        .onTapGesture {
-                                            if isStaff {
-                                                selectedProfileItem = item
-                                            }
-                                        }
+                                        .onTapGesture { if isStaff { selectedProfileItem = item } }
                                         .onLongPressGesture(minimumDuration: 0.4) {
                                             guard isStaff else { return }
                                             let currentQty = cartManager.items[item] ?? 0
@@ -114,33 +112,9 @@ struct StorefrontView: View {
                             .padding(.bottom, cartManager.totalItemCount > 0 && isStaff ? 100 : 20)
                         }
                     }
-                    .overlay(alignment: .bottom) {
-                        if cartManager.totalItemCount > 0 && isStaff {
-                            Button(action: { isShowingCheckout = true }) {
-                                HStack(spacing: 12) {
-                                    ZStack {
-                                        Image(systemName: "cart.fill").font(.title2)
-                                        Text("\(cartManager.totalItemCount)")
-                                            .font(.caption2).fontWeight(.bold).foregroundColor(.blue)
-                                            .frame(width: 18, height: 18).background(Color.white).clipShape(Circle())
-                                            .offset(x: 12, y: -10)
-                                    }
-                                    Text("Checkout • \(cartManager.totalAmount, format: .currency(code: "CAD"))")
-                                        .fontWeight(.bold)
-                                }
-                                .padding(.horizontal, 20).padding(.vertical, 16)
-                                .background(Color.blue).foregroundColor(.white).clipShape(Capsule())
-                                .shadow(color: .black.opacity(0.2), radius: 10, y: 5)
-                            }
-                            .padding(.bottom, 20)
-                            .transition(.move(edge: .bottom).combined(with: .opacity))
-                            .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
-                            .sensoryFeedback(.success, trigger: cartManager.totalItemCount)
-                        }
-                    }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    // UNIVERSAL BARCODE SCANNER: Now available to all roles
+                    // UNIVERSAL BARCODE SCANNER
                     Button(action: { isShowingScanner = true }) {
                         Image(systemName: "barcode.viewfinder")
                             .font(.title).foregroundColor(.primary)
@@ -148,20 +122,9 @@ struct StorefrontView: View {
                             .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
                     }
                     .padding(.trailing, 20)
-                    // Dynamically adjusts padding if a staff member has an active checkout cart
                     .padding(.bottom, (cartManager.totalItemCount > 0 && isStaff) ? 100 : 20)
                     .animation(.spring(response: 0.4, dampingFraction: 0.7), value: cartManager.totalItemCount)
                     .sensoryFeedback(.selection, trigger: isShowingScanner)
-                }
-                .overlay(alignment: .top) {
-                    if syncManager.isSyncing {
-                        HStack(spacing: 4) {
-                            ProgressView().controlSize(.mini)
-                            Text("Syncing").font(.caption2).foregroundStyle(.secondary)
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(.ultraThinMaterial).clipShape(Capsule()).padding(.top, 4)
-                    }
                 }
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search name or barcode...")
@@ -211,6 +174,29 @@ struct StorefrontView: View {
                         }
                     }
                 }
+                // MARK: - Frosted Glass Loading Screen Overlay
+                // Note how this sits at the root of the NavigationStack, completely outside of the .toolbar modifier
+                .overlay {
+                    if syncManager.isSyncing && allItems.isEmpty {
+                        ZStack {
+                            Rectangle()
+                                .fill(.ultraThinMaterial)
+                                .ignoresSafeArea()
+                            
+                            VStack(spacing: 20) {
+                                ProgressView()
+                                    .scaleEffect(1.5)
+                                
+                                Text("Entering Workspace...")
+                                    .font(.headline)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .transition(.opacity)
+                    }
+                }
+                // Animates the frosted glass fading in and out smoothly
+                .animation(.easeInOut(duration: 0.4), value: syncManager.isSyncing)
                 .navigationDestination(item: $selectedProfileItem) { item in
                     ItemProfileView(item: item)
                 }
@@ -264,6 +250,7 @@ struct StorefrontView: View {
             .task {
                 if let storeId = session.currentUser?.storeId {
                     syncManager.startListening(storeId: storeId, context: modelContext)
+                    await fetchStoreProfile(storeId: storeId)
                 }
             }
             
@@ -274,6 +261,36 @@ struct StorefrontView: View {
                 .transition(.move(edge: .leading))
                 .zIndex(2)
             }
+        }
+    }
+    
+    // MARK: - Store Profile Sync
+    private func fetchStoreProfile(storeId: String) async {
+        let db = Firestore.firestore()
+        do {
+            let doc = try await db.collection("stores").document(storeId).getDocument()
+            if let data = doc.data() {
+                // Update AppStorage & UserDefaults cache
+                if let name = data["storeName"] as? String { storeName = name }
+                UserDefaults.standard.set(data["storeEmail"] as? String ?? "", forKey: "storeEmail")
+                UserDefaults.standard.set(data["storePhone"] as? String ?? "", forKey: "storePhone")
+                UserDefaults.standard.set(data["storeAddress"] as? String ?? "", forKey: "storeAddress")
+                UserDefaults.standard.set(data["storeWebsite"] as? String ?? "", forKey: "storeWebsite")
+                UserDefaults.standard.set(data["receiptReturnPolicy"] as? String ?? "", forKey: "receiptReturnPolicy")
+                
+                // Fetch and cache the new store logo
+                if let logoURLString = data["storeLogoURL"] as? String, let url = URL(string: logoURLString) {
+                    if let (imageData, _) = try? await URLSession.shared.data(from: url) {
+                        UserDefaults.standard.set(imageData, forKey: "storeLogo")
+                        self.logoData = imageData
+                    }
+                } else {
+                    UserDefaults.standard.removeObject(forKey: "storeLogo")
+                    self.logoData = nil
+                }
+            }
+        } catch {
+            print("Failed to sync store profile: \(error.localizedDescription)")
         }
     }
     

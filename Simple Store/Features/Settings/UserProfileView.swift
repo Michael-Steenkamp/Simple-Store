@@ -29,6 +29,10 @@ struct UserProfileView: View {
     @State private var isShowingDeleteStoreAlert = false
     @State private var storeNameConfirmation = ""
     
+    @State private var isShowingWorkspaceSwitcher = false
+    @State private var isShowingDiscovery = false
+    @State private var isCreatingStore = false
+    
     var body: some View {
         NavigationStack {
             Form {
@@ -60,7 +64,7 @@ struct UserProfileView: View {
                         }
                         
                         HStack {
-                            Text("Role")
+                            Text("Active Role")
                             Spacer()
                             Text(session.currentUser?.role.rawValue.capitalized ?? "Guest")
                                 .fontWeight(.bold)
@@ -68,15 +72,21 @@ struct UserProfileView: View {
                                 .background(Color.blue.opacity(0.15)).foregroundColor(.blue)
                                 .clipShape(Capsule())
                         }
-                        
-                        HStack {
-                            Text("User ID")
-                            Spacer()
-                            Text(session.currentUser?.id ?? "N/A")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
+                    }
+                    
+                    // MARK: - Multi-Tenant Workspaces
+                    Section(header: Text("Workspaces")) {
+                        Button(action: { isShowingWorkspaceSwitcher = true }) {
+                            HStack {
+                                Image(systemName: "building.2.crop.circle.fill")
+                                    .foregroundColor(.blue)
+                                Text("My Stores")
+                                    .foregroundColor(.primary)
+                                Spacer()
+                                Text("\(session.currentUser?.storeIds.count ?? 0) Joined")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
                         }
                     }
                     
@@ -87,7 +97,7 @@ struct UserProfileView: View {
                         
                         if session.currentUser?.role == .admin {
                             Button(role: .destructive, action: { isShowingDeleteStoreAlert = true }) {
-                                Text("Delete Store Permanently").frame(maxWidth: .infinity, alignment: .center)
+                                Text("Delete Active Store Permanently").frame(maxWidth: .infinity, alignment: .center)
                             }
                         }
                     }
@@ -148,7 +158,15 @@ struct UserProfileView: View {
                 editEmail = session.currentUser?.email ?? ""
                 editPhone = session.currentUser?.phone ?? ""
             }
-            // (Alerts remain unchanged from previous implementation...)
+            .fullScreenCover(isPresented: $isShowingDiscovery) {
+                StoreSelectionView()
+            }
+            .fullScreenCover(isPresented: $isCreatingStore) {
+                StoreSetupWizardView()
+            }
+            .sheet(isPresented: $isShowingWorkspaceSwitcher) {
+                MyStoresView(isPresentedFromProfile: true)
+            }
             .alert("Delete Account", isPresented: $isShowingDeleteAccountAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Delete", role: .destructive) { Task { await deleteAccount() } }
@@ -165,14 +183,11 @@ struct UserProfileView: View {
         }
     }
     
+    // (Helper Functions remain unchanged)
     private func updateProfile() async {
         isProcessing = true
         errorMessage = ""; successMessage = ""
-        
-        guard let firebaseUser = Auth.auth().currentUser, let appUser = session.currentUser else {
-            isProcessing = false
-            return
-        }
+        guard let firebaseUser = Auth.auth().currentUser, let appUser = session.currentUser else { isProcessing = false; return }
         
         do {
             var emailNotice = ""
@@ -180,23 +195,16 @@ struct UserProfileView: View {
             
             if !editEmail.isEmpty && editEmail != appUser.email {
                 try await firebaseUser.sendEmailVerification(beforeUpdatingEmail: editEmail)
-                emailNotice = " A verification link was sent to your new email."
+                emailNotice = " A verification link was sent."
                 firestoreUpdates["email"] = editEmail
             }
-            if !newPassword.isEmpty {
-                try await firebaseUser.updatePassword(to: newPassword)
-            }
-            if !editName.isEmpty && editName != appUser.name {
-                firestoreUpdates["name"] = editName
-            }
-            if !editPhone.isEmpty && editPhone != appUser.phone {
-                firestoreUpdates["phone"] = editPhone
-            }
+            if !newPassword.isEmpty { try await firebaseUser.updatePassword(to: newPassword) }
+            if !editName.isEmpty && editName != appUser.name { firestoreUpdates["name"] = editName }
+            if !editPhone.isEmpty && editPhone != appUser.phone { firestoreUpdates["phone"] = editPhone }
             
             if !firestoreUpdates.isEmpty {
                 let db = Firestore.firestore()
-                try await db.collection("users").document(appUser.id).updateData(firestoreUpdates)
-                
+                try await db.collection("users").document(appUser.id ?? "").updateData(firestoreUpdates)
                 if !editName.isEmpty { session.currentUser?.name = editName }
                 if !editEmail.isEmpty { session.currentUser?.email = editEmail }
                 if !editPhone.isEmpty { session.currentUser?.phone = editPhone }
@@ -204,16 +212,8 @@ struct UserProfileView: View {
             
             successMessage = "Profile updated successfully.\(emailNotice)"
             newPassword = ""
-            
-            // Auto-exit edit mode on success
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                withAnimation { isEditing = false }
-                successMessage = ""
-            }
-            
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { withAnimation { isEditing = false }; successMessage = "" }
+        } catch { errorMessage = error.localizedDescription }
         isProcessing = false
     }
     
@@ -225,7 +225,7 @@ struct UserProfileView: View {
     }
     
     private func deleteStoreCompletely() async {
-        guard let storeId = session.currentUser?.storeId else { return }
+        guard let storeId = session.currentUser?.activeStoreId else { return }
         do {
             try await session.deleteStore(storeId: storeId)
             dismiss()
@@ -238,5 +238,91 @@ struct UserProfileView: View {
             Task { await session.checkAuthenticationState() }
             dismiss()
         } catch { print("Error signing out: \(error.localizedDescription)") }
+    }
+}
+
+// MARK: - Workspace Switcher Sub-View
+struct WorkspaceSwitcherView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(SessionManager.self) private var session
+    
+    @State private var myStores: [PublicStore] = []
+    @State private var isLoading = true
+    
+    var body: some View {
+        NavigationStack {
+            List {
+                if isLoading {
+                    ProgressView("Loading workspaces...")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .listRowBackground(Color.clear)
+                } else if myStores.isEmpty {
+                    Text("You haven't joined any stores yet.")
+                        .foregroundColor(.secondary).italic()
+                } else {
+                    ForEach(myStores) { store in
+                        Button(action: {
+                            Task {
+                                await session.switchActiveStore(to: store.id)
+                                dismiss()
+                            }
+                        }) {
+                            HStack {
+                                if let url = URL(string: store.logoURL), !store.logoURL.isEmpty {
+                                    AsyncImage(url: url) { phase in
+                                        if let image = phase.image { image.resizable().scaledToFill().frame(width: 40, height: 40).clipShape(Circle())
+                                        } else { placeholderIcon }
+                                    }
+                                } else { placeholderIcon }
+                                
+                                VStack(alignment: .leading) {
+                                    Text(store.name).font(.headline).foregroundColor(.primary)
+                                    if let role = session.currentUser?.storeRoles[store.id] {
+                                        Text(role.capitalized).font(.caption).foregroundColor(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                
+                                if session.currentUser?.activeStoreId == store.id {
+                                    Image(systemName: "checkmark.circle.fill").foregroundColor(.blue).font(.title3)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Your Workspaces")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
+            }
+            .task { await fetchMyStores() }
+        }
+    }
+    
+    var placeholderIcon: some View {
+        Circle().fill(Color(UIColor.secondarySystemBackground)).frame(width: 40, height: 40).overlay(Image(systemName: "storefront.fill").foregroundColor(.gray))
+    }
+    
+    private func fetchMyStores() async {
+        isLoading = true
+        guard let storeIds = session.currentUser?.storeIds, !storeIds.isEmpty else {
+            isLoading = false
+            return
+        }
+        
+        do {
+            let db = Firestore.firestore()
+            let snapshot = try await db.collection("stores").whereField(FieldPath.documentID(), in: storeIds).getDocuments()
+            
+            self.myStores = snapshot.documents.map { doc in
+                let name = doc.data()["storeName"] as? String ?? "Unnamed Store"
+                let address = doc.data()["storeAddress"] as? String ?? ""
+                let logoURL = doc.data()["storeLogoURL"] as? String ?? ""
+                return PublicStore(id: doc.documentID, name: name, address: address, logoURL: logoURL)
+            }.sorted(by: { $0.name < $1.name })
+            
+        } catch { print("Failed to fetch workspaces: \(error.localizedDescription)") }
+        isLoading = false
     }
 }
