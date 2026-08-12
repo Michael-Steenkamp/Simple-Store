@@ -21,6 +21,9 @@ struct SimpleStoreApp: App {
     /// Handles point-of-sale active cart state.
     @State private var cartManager = CartManager()
     
+    /// Listens for background Wi-Fi and Cellular state changes
+    @State private var networkMonitor = NetworkMonitor()
+    
     // MARK: - Local Data Container
     
     let sharedContainer: ModelContainer
@@ -37,7 +40,8 @@ struct SimpleStoreApp: App {
                 Customer.self,
                 Transaction.self,
                 CustomerStatus.self,
-                Employee.self
+                Employee.self,
+                OfflineSyncTask.self
             )
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
@@ -52,6 +56,7 @@ struct SimpleStoreApp: App {
                 .environment(sessionManager)
                 .environment(syncManager)
                 .environment(cartManager)
+                .environment(networkMonitor)
         }
         // Attach the local POS database to the SwiftUI environment
         .modelContainer(sharedContainer)

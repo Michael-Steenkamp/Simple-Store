@@ -4,11 +4,13 @@
 //
 
 import SwiftUI
+import SwiftData
 import FirebaseFirestore
 
 struct MyStoresView: View {
     @Environment(SessionManager.self) private var session
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     
     let isPresentedFromProfile: Bool
     
@@ -18,6 +20,9 @@ struct MyStoresView: View {
     @State private var isShowingDiscovery = false
     @State private var isCreatingStore = false
     @State private var storeToLeave: PublicStore?
+    
+    @Query private var pendingTasks: [OfflineSyncTask]
+    @State private var showingOfflineWarning = false
     
     // NEW: Tracks which specific store card was tapped to show a local spinner
     @State private var processingStoreId: String? = nil
@@ -154,19 +159,26 @@ struct MyStoresView: View {
                     secondaryButton: .cancel()
                 )
             }
+            .alert("Offline Data Pending", isPresented: $showingOfflineWarning) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("You have unsynced transactions saved to this iPad. Please reconnect to the internet to sync your data before switching workspaces.")
+            }
             .task { await fetchMyStores() }
         }
     }
     
     // MARK: - Orchestrates the natural UI dismissal before switching
     private func executeHandoff(to storeId: String) async {
-        // 1. Trigger the database swap first. This instantly prepares the Frosted Glass loading screen underneath.
+        // SAFETY LOCK: Block the workspace switch if there is pending offline data
+        if !pendingTasks.isEmpty {
+            processingStoreId = nil
+            showingOfflineWarning = true
+            return
+        }
+        
         await session.switchActiveStore(to: storeId)
-        
-        // 2. Wait a fraction of a second so the user sees the card's loading spinner acknowledge their tap
         try? await Task.sleep(for: .milliseconds(300))
-        
-        // 3. Dismiss the sheet to elegantly reveal the new Storefront!
         processingStoreId = nil
         if isPresentedFromProfile { dismiss() }
     }
@@ -202,7 +214,7 @@ struct MyStoreCard<MenuContent: View>: View {
     let role: String
     let isAutoJoin: Bool
     let isActiveStore: Bool
-    let isProcessing: Bool // NEW
+    let isProcessing: Bool
     let onEnter: () -> Void
     @ViewBuilder let menuActions: () -> MenuContent
     

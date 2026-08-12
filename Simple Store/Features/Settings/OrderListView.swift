@@ -12,6 +12,7 @@ struct OrderListView: View {
     
     // NEW: Inject Session to gate destructive actions
     @Environment(SessionManager.self) private var session
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \Transaction.date, order: .reverse) private var allTransactions: [Transaction]
     @Query private var allItems: [StoreItem]
@@ -154,13 +155,15 @@ struct OrderListView: View {
         }
         
         let txId = transaction.id.uuidString
+        let storeId = transaction.storeId ?? session.currentUser?.storeId ?? "" // Ensure storeId is retrieved
         modelContext.delete(transaction)
         try? modelContext.save()
         
         Task {
-            await syncManager.deleteTransactionFromCloud(txId)
+            // UPDATED PUSH CALLS
+            await syncManager.deleteTransactionFromCloud(txId, storeId: storeId, context: modelContext, isOnline: networkMonitor.isConnected)
             for item in restoredItems {
-                await syncManager.pushItemToCloud(item)
+                await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
             }
         }
     }

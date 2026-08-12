@@ -331,25 +331,81 @@ final class SyncManager {
         } catch { print("Failed to process customer status: \(error)") }
     }
     
-    // MARK: - Outgoing Data Pushers (Local -> Cloud)
-    
-    func pushItemToCloud(_ item: StoreItem) async {
-        guard let storeId = item.storeId else { return }
-        let data: [String: Any] = [
-            "id": item.id.uuidString,
-            "storeId": storeId,
-            "name": item.name,
-            "desc": item.desc ?? "",
-            "stockCount": item.stockCount,
-            "salesPrice": item.salesPrice,
-            "itemCost": item.itemCost,
-            "barcode": item.barcode ?? "",
-            "isActive": item.isActive
-        ]
-        try? await db.collection("inventory").document(item.id.uuidString).setData(data, merge: true)
-    }
-    
-    func pushTransactionToCloud(_ transaction: Transaction) async {
+    // MARK: - Offline Queue & Network Interceptor
+        
+        private func attemptCloudSync(storeId: String, collection: String, documentId: String, payload: [String: Any]?, operation: String, context: ModelContext, isOnline: Bool) async {
+            if isOnline {
+                do {
+                    if operation == "delete" {
+                        try await db.collection(collection).document(documentId).delete()
+                    } else {
+                        try await db.collection(collection).document(documentId).setData(payload ?? [:], merge: operation == "merge")
+                    }
+                } catch {
+                    queueOfflineTask(storeId: storeId, collection: collection, documentId: documentId, payload: payload, operation: operation, context: context)
+                }
+            } else {
+                queueOfflineTask(storeId: storeId, collection: collection, documentId: documentId, payload: payload, operation: operation, context: context)
+            }
+        }
+        
+        private func queueOfflineTask(storeId: String, collection: String, documentId: String, payload: [String: Any]?, operation: String, context: ModelContext) {
+            let task = OfflineSyncTask(
+                storeId: storeId,
+                collection: collection,
+                documentId: documentId,
+                payload: payload,
+                operation: operation
+            )
+            context.insert(task)
+            try? context.save()
+            print("Queued offline task for \(collection)/\(documentId)")
+        }
+        
+        func processOfflineQueue(context: ModelContext) async {
+            let descriptor = FetchDescriptor<OfflineSyncTask>(sortBy: [SortDescriptor(\.timestamp)])
+            guard let tasks = try? context.fetch(descriptor), !tasks.isEmpty else { return }
+            
+            print("Processing \(tasks.count) offline tasks...")
+            
+            for task in tasks {
+                do {
+                    if task.operation == "delete" {
+                        try await db.collection(task.collection).document(task.documentId).delete()
+                    } else {
+                        if let payload = task.payload {
+                            try await db.collection(task.collection).document(task.documentId).setData(payload, merge: true)
+                        }
+                    }
+                    // If successful, safely remove it from the local SwiftData queue
+                    context.delete(task)
+                    try? context.save()
+                } catch {
+                    print("Failed to sync task \(task.id): \(error.localizedDescription)")
+                    break // Stop processing on the first failure to maintain chronological order
+                }
+            }
+        }
+        
+        // MARK: - Outgoing Data Pushers (Local -> Cloud)
+        
+        func pushItemToCloud(_ item: StoreItem, context: ModelContext, isOnline: Bool) async {
+            guard let storeId = item.storeId else { return }
+            let data: [String: Any] = [
+                "id": item.id.uuidString,
+                "storeId": storeId,
+                "name": item.name,
+                "desc": item.desc ?? "",
+                "stockCount": item.stockCount,
+                "salesPrice": item.salesPrice,
+                "itemCost": item.itemCost,
+                "barcode": item.barcode ?? "",
+                "isActive": item.isActive
+            ]
+            await attemptCloudSync(storeId: storeId, collection: "inventory", documentId: item.id.uuidString, payload: data, operation: "merge", context: context, isOnline: isOnline)
+        }
+        
+        func pushTransactionToCloud(_ transaction: Transaction, context: ModelContext, isOnline: Bool) async {
             guard let storeId = transaction.storeId else { return }
             let lineItemsData = (transaction.lineItems ?? []).map { li in
                 ["id": li.id.uuidString, "itemName": li.itemName, "itemID": li.itemID, "quantity": li.quantity, "pricePerUnit": li.pricePerUnit]
@@ -370,79 +426,79 @@ final class SyncManager {
                 "lineItems": lineItemsData,
                 "payments": paymentsData
             ]
-            try? await db.collection("transactions").document(transaction.id.uuidString).setData(data)
+            await attemptCloudSync(storeId: storeId, collection: "transactions", documentId: transaction.id.uuidString, payload: data, operation: "set", context: context, isOnline: isOnline)
         }
-    
-    func pushCustomerToCloud(_ customer: Customer) async {
-        guard let storeId = customer.storeId else { return }
-        let data: [String: Any] = [
-            "id": customer.id.uuidString,
-            "storeId": storeId,
-            "firstName": customer.firstName,
-            "lastName": customer.lastName,
-            "email": customer.email,
-            "phone": customer.phone,
-            "notes": customer.notes,
-            "isActive": customer.isActive,
-            "updatedAt": customer.updatedAt
-        ]
-        try? await db.collection("customers").document(customer.id.uuidString).setData(data, merge: true)
+        
+        func pushCustomerToCloud(_ customer: Customer, context: ModelContext, isOnline: Bool) async {
+            guard let storeId = customer.storeId else { return }
+            let data: [String: Any] = [
+                "id": customer.id.uuidString,
+                "storeId": storeId,
+                "firstName": customer.firstName,
+                "lastName": customer.lastName,
+                "email": customer.email,
+                "phone": customer.phone,
+                "notes": customer.notes,
+                "isActive": customer.isActive,
+                "updatedAt": customer.updatedAt
+            ]
+            await attemptCloudSync(storeId: storeId, collection: "customers", documentId: customer.id.uuidString, payload: data, operation: "merge", context: context, isOnline: isOnline)
+        }
+        
+        func pushEmployeeToCloud(_ employee: Employee, context: ModelContext, isOnline: Bool) async {
+            guard let storeId = employee.storeId else { return }
+            let data: [String: Any] = [
+                "id": employee.id.uuidString,
+                "storeId": storeId,
+                "name": employee.name,
+                "isActive": employee.isActive
+            ]
+            await attemptCloudSync(storeId: storeId, collection: "employees", documentId: employee.id.uuidString, payload: data, operation: "merge", context: context, isOnline: isOnline)
+        }
+        
+        // MARK: - Deletions
+        
+        func deleteTransactionFromCloud(_ transactionId: String, storeId: String, context: ModelContext, isOnline: Bool) async {
+            await attemptCloudSync(storeId: storeId, collection: "transactions", documentId: transactionId, payload: nil, operation: "delete", context: context, isOnline: isOnline)
+        }
+        
+        func deleteCustomerFromCloud(_ customerId: String, storeId: String, context: ModelContext, isOnline: Bool) async {
+            await attemptCloudSync(storeId: storeId, collection: "customers", documentId: customerId, payload: nil, operation: "delete", context: context, isOnline: isOnline)
+        }
+        
+        // MARK: - Tag & Status Management
+        
+        func pushItemTagToCloud(_ tag: ItemTag, context: ModelContext, isOnline: Bool) async {
+            guard let storeId = tag.storeId else { return }
+            let data: [String: Any] = [
+                "id": tag.id.uuidString,
+                "storeId": storeId,
+                "name": tag.name
+            ]
+            await attemptCloudSync(storeId: storeId, collection: "tags", documentId: tag.id.uuidString, payload: data, operation: "merge", context: context, isOnline: isOnline)
+        }
+        
+        func deleteItemTagFromCloud(_ tagId: String, storeId: String, context: ModelContext, isOnline: Bool) async {
+            await attemptCloudSync(storeId: storeId, collection: "tags", documentId: tagId, payload: nil, operation: "delete", context: context, isOnline: isOnline)
+        }
+        
+        func pushCustomerStatusToCloud(_ status: CustomerStatus, context: ModelContext, isOnline: Bool) async {
+            guard let storeId = status.storeId else { return }
+            let data: [String: Any] = [
+                "id": status.id.uuidString,
+                "storeId": storeId,
+                "name": status.name
+            ]
+            await attemptCloudSync(storeId: storeId, collection: "customerStatuses", documentId: status.id.uuidString, payload: data, operation: "merge", context: context, isOnline: isOnline)
+        }
+        
+        func deleteCustomerStatusFromCloud(_ statusId: String, storeId: String, context: ModelContext, isOnline: Bool) async {
+            await attemptCloudSync(storeId: storeId, collection: "customerStatuses", documentId: statusId, payload: nil, operation: "delete", context: context, isOnline: isOnline)
+        }
+        
+        // MARK: - Store Profile Syncing
+        
+        func pushStoreProfileToCloud(storeId: String, payload: [String: Any], context: ModelContext, isOnline: Bool) async {
+            await attemptCloudSync(storeId: storeId, collection: "stores", documentId: storeId, payload: payload, operation: "merge", context: context, isOnline: isOnline)
+        }
     }
-    
-    func pushEmployeeToCloud(_ employee: Employee) async {
-        guard let storeId = employee.storeId else { return }
-        let data: [String: Any] = [
-            "id": employee.id.uuidString,
-            "storeId": storeId,
-            "name": employee.name,
-            "isActive": employee.isActive
-        ]
-        try? await db.collection("employees").document(employee.id.uuidString).setData(data, merge: true)
-    }
-    
-    // MARK: - Transaction & Customer Deletions
-    
-    func deleteTransactionFromCloud(_ transactionId: String) async {
-        try? await db.collection("transactions").document(transactionId).delete()
-    }
-    
-    func deleteCustomerFromCloud(_ customerId: String) async {
-        try? await db.collection("customers").document(customerId).delete()
-    }
-    
-    // MARK: - Tag & Status Management
-    
-    func pushItemTagToCloud(_ tag: ItemTag) async {
-        guard let storeId = tag.storeId else { return }
-        let data: [String: Any] = [
-            "id": tag.id.uuidString,
-            "storeId": storeId,
-            "name": tag.name
-        ]
-        try? await db.collection("tags").document(tag.id.uuidString).setData(data, merge: true)
-    }
-    
-    func deleteItemTagFromCloud(_ tagId: String) async {
-        try? await db.collection("tags").document(tagId).delete()
-    }
-    
-    func pushCustomerStatusToCloud(_ status: CustomerStatus) async {
-        guard let storeId = status.storeId else { return }
-        let data: [String: Any] = [
-            "id": status.id.uuidString,
-            "storeId": storeId,
-            "name": status.name
-        ]
-        try? await db.collection("customerStatuses").document(status.id.uuidString).setData(data, merge: true)
-    }
-    
-    func deleteCustomerStatusFromCloud(_ statusId: String) async {
-        try? await db.collection("customerStatuses").document(statusId).delete()
-    }
-    
-    // MARK: - Store Profile Syncing
-    
-    func pushStoreProfileToCloud(storeId: String, payload: [String: Any]) async {
-        try? await db.collection("stores").document(storeId).setData(payload, merge: true)
-    }
-}

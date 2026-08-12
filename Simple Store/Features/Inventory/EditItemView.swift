@@ -16,6 +16,7 @@ struct EditItemView: View {
     
     @Environment(SyncManager.self) private var syncManager
     @Environment(SessionManager.self) private var session
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     let item: StoreItem
     var onDelete: (() -> Void)? = nil
@@ -67,199 +68,11 @@ struct EditItemView: View {
     
     var body: some View {
         Form {
-            // MARK: - Product Image
-            Section {
-                VStack(spacing: 16) {
-                    Button(action: {
-                        isShowingPhotoOptions = true
-                    }) {
-                        VStack(spacing: 8) {
-                            if let data = imageData, let uiImage = UIImage(data: data) {
-                                Image(uiImage: uiImage)
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 120, height: 120)
-                                    .clipShape(Circle())
-                                    .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-                            } else {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color(UIColor.secondarySystemBackground))
-                                        .frame(width: 120, height: 120)
-                                    Image(systemName: "camera.macro")
-                                        .font(.system(size: 40))
-                                        .foregroundColor(Color(UIColor.systemGray3))
-                                }
-                            }
-                            
-                            Text(imageData == nil ? "Add Product Photo" : "Change Photo")
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .padding(.horizontal, 12)
-                                .padding(.vertical, 6)
-                                .background(Color(UIColor.secondarySystemFill))
-                                .foregroundColor(.primary)
-                                .clipShape(Capsule())
-                        }
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, 10)
-                    .padding(.bottom, 10)
-                    
-                    TextField("Item Name", text: $name)
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .multilineTextAlignment(.center)
-                        .padding(.bottom, 10)
-                }
-                .frame(maxWidth: .infinity)
-            }
-            
-            // MARK: - Pricing & Stock
-            Section(
-                header: Text("Pricing & Inventory"),
-                footer: Text(salesPriceString.isEmpty ? "Sales price is required." : "")
-                    .foregroundColor(.red)
-            ) {
-                HStack {
-                    Image(systemName: "tag")
-                        .foregroundColor(salesPriceString.isEmpty ? .red : .green)
-                        .frame(width: 24)
-                    Text("$").foregroundColor(.secondary)
-                    TextField("0.00 (Sales Price)", text: $salesPriceString)
-                        .keyboardType(.decimalPad)
-                        .focused($focusedField, equals: .price)
-                }
-                
-                HStack {
-                    Image(systemName: "building.2")
-                        .foregroundColor(.gray)
-                        .frame(width: 24)
-                    Text("$").foregroundColor(.secondary)
-                    TextField("0.00 (Wholesale Cost)", text: $itemCostString)
-                        .keyboardType(.decimalPad)
-                        .focused($focusedField, equals: .cost)
-                }
-                
-                Stepper(value: $stockCount, in: 0...9999) {
-                    HStack {
-                        Image(systemName: "shippingbox")
-                            .foregroundColor(.gray)
-                            .frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Stock").font(.caption2).foregroundColor(.secondary)
-                            Text("\(stockCount)").fontWeight(.semibold)
-                        }
-                    }
-                }
-            }
-            
-            // MARK: - Organization
-            Section(header: Text("Organization & Identifiers")) {
-                HStack {
-                    Image(systemName: "barcode")
-                        .foregroundColor(.gray)
-                        .frame(width: 24)
-                    
-                    TextField("Scan or type barcode...", text: $barcode)
-                        .focused($focusedField, equals: .barcode)
-                        .submitLabel(.done)
-                    
-                    Spacer()
-                    
-                    Button(action: {
-                        isShowingScanner = true
-                    }) {
-                        Image(systemName: "barcode.viewfinder")
-                            .font(.title3)
-                            .foregroundColor(.blue)
-                    }
-                }
-                
-                Button(action: {
-                    isShowingTagManager = true
-                }) {
-                    HStack {
-                        Image(systemName: "tag.circle")
-                            .foregroundColor(.gray)
-                            .frame(width: 24)
-                        
-                        if selectedTags.isEmpty {
-                            Text("Assign Tags")
-                                .foregroundColor(.primary)
-                        } else {
-                            ScrollView(.horizontal, showsIndicators: false) {
-                                HStack {
-                                    ForEach(selectedTags) { tag in
-                                        TagPillView(name: tag.name)
-                                    }
-                                }
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .contentShape(Rectangle())
-                }
-            }
-            
-            // MARK: - Basic Details
-            Section(header: Text("Basic Details")) {
-                
-                HStack(alignment: .top) {
-                    Image(systemName: "text.alignleft")
-                        .foregroundColor(.gray)
-                        .frame(width: 24)
-                        .padding(.top, 4)
-                    TextField("Notes or description...", text: $desc, axis: .vertical)
-                        .lineLimit(2...5)
-                        .focused($focusedField, equals: .desc)
-                }
-            }
-            
-            // MARK: - Save
-            Section {
-                if item.isActive {
-                    Button(role: .confirm, action: {
-                        saveChanges()
-                    }) {
-                        Text("Save Changes")
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .foregroundColor(.green)
-                            .fontWeight(.bold)
-                    }
-                }
-            }
-            
-            // MARK: - Danger Zone
-            Section {
-                if item.isActive {
-                    Button(role: .destructive, action: {
-                        isShowingDeleteConfirm = true
-                    }) {
-                        Text("Archive Item")
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    }
-                } else {
-                    Button(action: {
-                        item.isActive = true
-                        saveChanges() // This handles the cloud sync automatically
-                    }) {
-                        Text("Restore to Storefront")
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .foregroundColor(.blue)
-                    }
-                    
-                    Button(role: .destructive, action: {
-                        isShowingHardDeleteConfirm = true
-                    }) {
-                        Text("Permanently Delete")
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    }
-                }
-            }
+            imageSection
+            pricingSection
+            organizationSection
+            basicDetailsSection
+            actionSections
         }
         .scrollDismissesKeyboard(.automatic)
         .navigationTitle("Edit Item")
@@ -284,17 +97,7 @@ struct EditItemView: View {
         .alert("Archive Item", isPresented: $isShowingDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
             Button(isInCart ? "Archive & Remove" : "Archive", role: .destructive) {
-                item.isActive = false
-                item.updatedAt = Date()
-                cartManager.items.removeValue(forKey: item)
-                try? modelContext.save()
-                
-                Task {
-                    await syncManager.pushItemToCloud(item)
-                }
-                
-                dismiss()
-                onDelete?()
+                archiveItem()
             }
         } message: {
             if isInCart {
@@ -306,27 +109,7 @@ struct EditItemView: View {
         .alert("Permanently Delete", isPresented: $isShowingHardDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
             Button(isInCart ? "Delete & Remove" : "Delete", role: .destructive) {
-                item.name = item.name + " (Deleted)"
-                item.imageData = nil
-                item.imageURL = nil
-                item.tags = []
-                item.barcode = nil
-                item.desc = nil
-                item.isActive = false
-                item.updatedAt = Date()
-                
-                cartManager.items.removeValue(forKey: item)
-                try? modelContext.save()
-                
-                Task {
-                    if let storeId = session.currentUser?.storeId {
-                        await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: item.id.uuidString)
-                    }
-                    await syncManager.pushItemToCloud(item)
-                }
-                
-                dismiss()
-                onDelete?()
+                permanentlyDeleteItem()
             }
         } message: {
             if isInCart {
@@ -335,6 +118,248 @@ struct EditItemView: View {
                 Text("WARNING: This will permanently strip the metadata of \(item.name) and remove it from the system. Transaction records will be preserved.")
             }
         }
+    }
+    
+    // MARK: - Extracted Form Sections (Resolves Compiler Timeout)
+    
+    private var imageSection: some View {
+        Section {
+            VStack(spacing: 16) {
+                Button(action: {
+                    isShowingPhotoOptions = true
+                }) {
+                    VStack(spacing: 8) {
+                        if let data = imageData, let uiImage = UIImage(data: data) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 120, height: 120)
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+                        } else {
+                            ZStack {
+                                Circle()
+                                    .fill(Color(UIColor.secondarySystemBackground))
+                                    .frame(width: 120, height: 120)
+                                Image(systemName: "camera.macro")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(Color(UIColor.systemGray3))
+                            }
+                        }
+                        
+                        Text(imageData == nil ? "Add Product Photo" : "Change Photo")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(UIColor.secondarySystemFill))
+                            .foregroundColor(.primary)
+                            .clipShape(Capsule())
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.top, 10)
+                .padding(.bottom, 10)
+                
+                TextField("Item Name", text: $name)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 10)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+    
+    private var pricingSection: some View {
+        Section(
+            header: Text("Pricing & Inventory"),
+            footer: Text(salesPriceString.isEmpty ? "Sales price is required." : "")
+                .foregroundColor(.red)
+        ) {
+            HStack {
+                Image(systemName: "tag")
+                    .foregroundColor(salesPriceString.isEmpty ? .red : .green)
+                    .frame(width: 24)
+                Text("$").foregroundColor(.secondary)
+                TextField("0.00 (Sales Price)", text: $salesPriceString)
+                    .keyboardType(.decimalPad)
+                    .focused($focusedField, equals: .price)
+            }
+            
+            HStack {
+                Image(systemName: "building.2")
+                    .foregroundColor(.gray)
+                    .frame(width: 24)
+                Text("$").foregroundColor(.secondary)
+                TextField("0.00 (Wholesale Cost)", text: $itemCostString)
+                    .keyboardType(.decimalPad)
+                    .focused($focusedField, equals: .cost)
+            }
+            
+            Stepper(value: $stockCount, in: 0...9999) {
+                HStack {
+                    Image(systemName: "shippingbox")
+                        .foregroundColor(.gray)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Stock").font(.caption2).foregroundColor(.secondary)
+                        Text("\(stockCount)").fontWeight(.semibold)
+                    }
+                }
+            }
+        }
+    }
+    
+    private var organizationSection: some View {
+        Section(header: Text("Organization & Identifiers")) {
+            HStack {
+                Image(systemName: "barcode")
+                    .foregroundColor(.gray)
+                    .frame(width: 24)
+                
+                TextField("Scan or type barcode...", text: $barcode)
+                    .focused($focusedField, equals: .barcode)
+                    .submitLabel(.done)
+                
+                Spacer()
+                
+                Button(action: {
+                    isShowingScanner = true
+                }) {
+                    Image(systemName: "barcode.viewfinder")
+                        .font(.title3)
+                        .foregroundColor(.blue)
+                }
+            }
+            
+            Button(action: {
+                isShowingTagManager = true
+            }) {
+                HStack {
+                    Image(systemName: "tag.circle")
+                        .foregroundColor(.gray)
+                        .frame(width: 24)
+                    
+                    if selectedTags.isEmpty {
+                        Text("Assign Tags")
+                            .foregroundColor(.primary)
+                    } else {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack {
+                                ForEach(selectedTags) { tag in
+                                    TagPillView(name: tag.name)
+                                }
+                            }
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+        }
+    }
+    
+    private var basicDetailsSection: some View {
+        Section(header: Text("Basic Details")) {
+            HStack(alignment: .top) {
+                Image(systemName: "text.alignleft")
+                    .foregroundColor(.gray)
+                    .frame(width: 24)
+                    .padding(.top, 4)
+                TextField("Notes or description...", text: $desc, axis: .vertical)
+                    .lineLimit(2...5)
+                    .focused($focusedField, equals: .desc)
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var actionSections: some View {
+        Section {
+            if item.isActive {
+                Button(action: {
+                    saveChanges()
+                }) {
+                    Text("Save Changes")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .foregroundColor(.green)
+                        .fontWeight(.bold)
+                }
+            }
+        }
+        
+        Section {
+            if item.isActive {
+                Button(role: .destructive, action: {
+                    isShowingDeleteConfirm = true
+                }) {
+                    Text("Archive Item")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+            } else {
+                Button(action: {
+                    item.isActive = true
+                    saveChanges() // This handles the cloud sync automatically
+                }) {
+                    Text("Restore to Storefront")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .foregroundColor(.blue)
+                }
+                
+                Button(role: .destructive, action: {
+                    isShowingHardDeleteConfirm = true
+                }) {
+                    Text("Permanently Delete")
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
+        }
+    }
+    
+    // MARK: - Actions
+    
+    private func archiveItem() {
+        item.isActive = false
+        item.updatedAt = Date()
+        cartManager.items.removeValue(forKey: item)
+        try? modelContext.save()
+        
+        // UPDATED PUSH CALL
+        Task {
+            await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
+        }
+        
+        dismiss()
+        onDelete?()
+    }
+    
+    private func permanentlyDeleteItem() {
+        item.name = item.name + " (Deleted)"
+        item.imageData = nil
+        item.imageURL = nil
+        item.tags = []
+        item.barcode = nil
+        item.desc = nil
+        item.isActive = false
+        item.updatedAt = Date()
+        
+        cartManager.items.removeValue(forKey: item)
+        try? modelContext.save()
+        
+        // UPDATED PUSH CALL
+        Task {
+            if let storeId = session.currentUser?.storeId {
+                await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: item.id.uuidString)
+            }
+            await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
+        }
+        
+        dismiss()
+        onDelete?()
     }
     
     private func saveChanges() {
@@ -353,7 +378,7 @@ struct EditItemView: View {
         
         try? modelContext.save()
         
-        // NEW: Sync edits and new images to Firebase Storage
+        // UPDATED PUSH CALL
         Task {
             if let storeId = session.currentUser?.storeId {
                 if let data = imageData {
@@ -367,7 +392,7 @@ struct EditItemView: View {
                     try? modelContext.save()
                 }
             }
-            await syncManager.pushItemToCloud(item)
+            await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
         }
         
         let generator = UIImpactFeedbackGenerator(style: .medium)

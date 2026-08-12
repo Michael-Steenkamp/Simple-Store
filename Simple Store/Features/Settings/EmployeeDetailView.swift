@@ -14,6 +14,7 @@ struct EmployeeDetailView: View {
     
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     let employee: Employee
     
@@ -105,7 +106,8 @@ struct EmployeeDetailView: View {
     private func archiveEmployee() {
         employee.isActive = false
         try? modelContext.save()
-        Task { await syncManager.pushEmployeeToCloud(employee) }
+        // UPDATED PUSH CALL
+        Task { await syncManager.pushEmployeeToCloud(employee, context: modelContext, isOnline: networkMonitor.isConnected) }
         dismiss()
     }
 }

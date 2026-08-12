@@ -15,6 +15,7 @@ struct StorefrontView: View {
     
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor
     
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     @Query(sort: \ItemTag.name) private var allTags: [ItemTag]
@@ -113,6 +114,7 @@ struct StorefrontView: View {
                         }
                     }
                 }
+                .withOfflineBanner()
                 .overlay(alignment: .bottomTrailing) {
                     // UNIVERSAL BARCODE SCANNER
                     Button(action: { isShowingScanner = true }) {
@@ -251,6 +253,13 @@ struct StorefrontView: View {
                 if let storeId = session.currentUser?.storeId {
                     syncManager.startListening(storeId: storeId, context: modelContext)
                     await fetchStoreProfile(storeId: storeId)
+                }
+            }
+            .onChange(of: networkMonitor.isConnected) { _, isConnected in
+                if isConnected {
+                    Task {
+                        await syncManager.processOfflineQueue(context: modelContext)
+                    }
                 }
             }
             

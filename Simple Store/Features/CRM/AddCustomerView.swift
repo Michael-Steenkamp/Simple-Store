@@ -15,6 +15,7 @@ struct AddCustomerView: View {
     // NEW: Inject managers to route the customer to the correct tenant and sync
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \CustomerStatus.name) private var allStatuses: [CustomerStatus]
     
@@ -110,9 +111,9 @@ struct AddCustomerView: View {
                         newCustomer.status = selectedStatus
                         try? modelContext.save()
                         
-                        // NEW: Push customer to Firestore
+                        // UPDATED PUSH CALL
                         Task {
-                            await syncManager.pushCustomerToCloud(newCustomer)
+                            await syncManager.pushCustomerToCloud(newCustomer, context: modelContext, isOnline: networkMonitor.isConnected)
                         }
                         
                         onSave?(newCustomer)

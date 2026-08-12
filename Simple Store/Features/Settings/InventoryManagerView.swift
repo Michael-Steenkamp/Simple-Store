@@ -12,8 +12,9 @@ struct InventoryManagerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
     
-    // NEW: Inject SyncManager
+    // NEW: Inject SyncManager & NetworkMonitor
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
@@ -28,15 +29,17 @@ struct InventoryManagerView: View {
         allItems.filter { $0.isActive }
     }
     
+    // FIX: Simplified the computed property to resolve the compiler timeout
     var filteredItems: [StoreItem] {
-        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+        let trimmedSearch = searchText.trimmingCharacters(in: .whitespaces)
+        if trimmedSearch.isEmpty {
             return activeItems
-        } else {
-            return activeItems.filter { item in
-                let nameMatch = item.name.localizedCaseInsensitiveContains(searchText)
-                let barcodeMatch = item.barcode?.localizedCaseInsensitiveContains(searchText) ?? false
-                return nameMatch || barcodeMatch
-            }
+        }
+        
+        return activeItems.filter { item in
+            let nameMatch = item.name.localizedCaseInsensitiveContains(trimmedSearch)
+            let barcodeMatch = item.barcode?.localizedCaseInsensitiveContains(trimmedSearch) ?? false
+            return nameMatch || barcodeMatch
         }
     }
     
@@ -117,9 +120,9 @@ struct InventoryManagerView: View {
                     try? modelContext.save()
                 }
                 
-                // NEW: Sync the archival status to the cloud
+                // UPDATED PUSH CALL
                 Task {
-                    await syncManager.pushItemToCloud(item)
+                    await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
                 }
             }
         } message: { item in
@@ -138,9 +141,9 @@ struct InventoryManagerView: View {
                 try? modelContext.save()
             }
             
-            // NEW: Sync the archival status to the cloud
+            // UPDATED PUSH CALL
             Task {
-                await syncManager.pushItemToCloud(item)
+                await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
             }
         }
     }
@@ -190,8 +193,9 @@ struct ArchivedInventoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
     
-    // NEW: Inject SyncManager
+    // NEW: Inject SyncManager & NetworkMonitor
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     
@@ -270,9 +274,9 @@ struct ArchivedInventoryView: View {
             try? modelContext.save()
         }
         
-        // NEW: Sync the restored status to the cloud
+        // UPDATED PUSH CALL
         Task {
-            await syncManager.pushItemToCloud(item)
+            await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
         }
     }
     
@@ -287,9 +291,9 @@ struct ArchivedInventoryView: View {
         cartManager.items.removeValue(forKey: item)
         try? modelContext.save()
         
-        // NEW: Sync the stripped metadata status to the cloud
+        // UPDATED PUSH CALL
         Task {
-            await syncManager.pushItemToCloud(item)
+            await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
         }
     }
 }

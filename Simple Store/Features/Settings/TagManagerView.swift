@@ -13,6 +13,7 @@ struct TagManagerView: View {
     // NEW: Inject global managers for cloud sync
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \ItemTag.name) private var allTags: [ItemTag]
     @Query(sort: \CustomerStatus.name) private var allStatuses: [CustomerStatus]
@@ -161,8 +162,8 @@ struct TagManagerView: View {
                 modelContext.insert(newTag)
                 if isSelectionMode { selectedTags.append(newTag) }
                 
-                // NEW: Sync to Cloud
-                Task { await syncManager.pushItemTagToCloud(newTag) }
+                // UPDATED PUSH CALL
+                Task { await syncManager.pushItemTagToCloud(newTag, context: modelContext, isOnline: networkMonitor.isConnected) }
             }
         } else {
             if !allStatuses.contains(where: { $0.name.lowercased() == trimmedName.lowercased() }) {
@@ -170,8 +171,8 @@ struct TagManagerView: View {
                 let newStatus = CustomerStatus(id: UUID(), name: trimmedName, storeId: session.currentUser?.storeId)
                 modelContext.insert(newStatus)
                 
-                // NEW: Sync to Cloud
-                Task { await syncManager.pushCustomerStatusToCloud(newStatus) }
+                // UPDATED PUSH CALL
+                Task { await syncManager.pushCustomerStatusToCloud(newStatus, context: modelContext, isOnline: networkMonitor.isConnected) }
             }
         }
         
@@ -192,9 +193,10 @@ struct TagManagerView: View {
             selectedTags.remove(at: index)
         }
         
-        // NEW: Sync Deletion to Cloud
+        // UPDATED PUSH CALL
         let tagId = tag.id.uuidString
-        Task { await syncManager.deleteItemTagFromCloud(tagId) }
+        let storeId = tag.storeId ?? session.currentUser?.storeId ?? ""
+        Task { await syncManager.deleteItemTagFromCloud(tagId, storeId: storeId, context: modelContext, isOnline: networkMonitor.isConnected) }
         
         modelContext.delete(tag)
         try? modelContext.save()
@@ -202,9 +204,10 @@ struct TagManagerView: View {
     }
     
     private func deleteStatus(_ status: CustomerStatus) {
-        // NEW: Sync Deletion to Cloud
+        // UPDATED PUSH CALL
         let statusId = status.id.uuidString
-        Task { await syncManager.deleteCustomerStatusFromCloud(statusId) }
+        let storeId = status.storeId ?? session.currentUser?.storeId ?? ""
+        Task { await syncManager.deleteCustomerStatusFromCloud(statusId, storeId: storeId, context: modelContext, isOnline: networkMonitor.isConnected) }
         
         modelContext.delete(status)
         try? modelContext.save()

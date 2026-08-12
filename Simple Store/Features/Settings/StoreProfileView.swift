@@ -6,13 +6,16 @@
 //
 
 import SwiftUI
+import SwiftData
 import PhotosUI
 
 struct StoreProfileView: View {
+    @Environment(\.modelContext) private var modelContext // NEW
     @Environment(\.dismiss) private var dismiss
     
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     // MARK: - Auto-Saving Data Bindings
     @AppStorage("storeName") private var storeName: String = ""
@@ -210,7 +213,7 @@ struct StoreProfileView: View {
         guard let storeId = session.currentUser?.storeId else { return }
         isSyncingProfile = true
         
-        // NEW: Upload logo image to Storage and retrieve the URL
+        // Upload logo image to Storage and retrieve the URL
         var storeLogoURL = ""
         if let logoData {
             if let url = try? await StorageManager.shared.uploadStoreLogo(data: logoData, storeId: storeId) {
@@ -230,10 +233,11 @@ struct StoreProfileView: View {
             "showAddressOnReceipt": showAddressOnReceipt,
             "showWebsiteOnReceipt": showWebsiteOnReceipt,
             "showEmployeeOnReceipt": showEmployeeOnReceipt,
-            "storeLogoURL": storeLogoURL // Append the new image URL to payload
+            "storeLogoURL": storeLogoURL
         ]
         
-        await syncManager.pushStoreProfileToCloud(storeId: storeId, payload: payload)
+        // UPDATED PUSH CALL
+        await syncManager.pushStoreProfileToCloud(storeId: storeId, payload: payload, context: modelContext, isOnline: networkMonitor.isConnected)
         
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)

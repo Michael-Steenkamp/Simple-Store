@@ -15,6 +15,7 @@ struct AddItemView: View {
     
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @State private var name: String = ""
     @State private var desc: String = ""
@@ -247,7 +248,6 @@ struct AddItemView: View {
         modelContext.insert(newItem)
         try? modelContext.save()
         
-        // NEW: Push image to Firebase Storage if exists before updating cloud database
         Task {
             if let data = imageData, let storeId = session.currentUser?.storeId {
                 if let url = try? await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: newItem.id.uuidString) {
@@ -255,7 +255,8 @@ struct AddItemView: View {
                     try? modelContext.save()
                 }
             }
-            await syncManager.pushItemToCloud(newItem)
+            // UPDATED PUSH CALL
+            await syncManager.pushItemToCloud(newItem, context: modelContext, isOnline: networkMonitor.isConnected)
         }
         
         let generator = UIImpactFeedbackGenerator(style: .medium)

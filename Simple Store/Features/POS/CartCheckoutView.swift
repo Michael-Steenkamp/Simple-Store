@@ -15,6 +15,7 @@ struct CartCheckoutView: View {
     
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor
     
     @FocusState private var focusedSplitID: UUID?
     
@@ -353,8 +354,10 @@ struct CartCheckoutView: View {
         try? modelContext.save()
         
         Task {
-            for item in modifiedItems { await syncManager.pushItemToCloud(item) }
-            await syncManager.pushTransactionToCloud(newTransaction)
+            for item in modifiedItems {
+                await syncManager.pushItemToCloud(item, context: modelContext, isOnline: networkMonitor.isConnected)
+            }
+            await syncManager.pushTransactionToCloud(newTransaction, context: modelContext, isOnline: networkMonitor.isConnected)
         }
         
         if let email = cartManager.selectedCustomer?.email, !email.trimmingCharacters(in: .whitespaces).isEmpty {

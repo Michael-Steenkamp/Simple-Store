@@ -14,6 +14,7 @@ struct EditCustomerView: View {
     
     @Environment(SyncManager.self) private var syncManager
     @Environment(SessionManager.self) private var session
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     let customer: Customer
     @Query(sort: \CustomerStatus.name) private var allStatuses: [CustomerStatus]
@@ -138,7 +139,8 @@ struct EditCustomerView: View {
         customer.updatedAt = Date()
         
         try? modelContext.save()
-        Task { await syncManager.pushCustomerToCloud(customer) }
+        // UPDATED PUSH CALL
+        Task { await syncManager.pushCustomerToCloud(customer, context: modelContext, isOnline: networkMonitor.isConnected) }
         dismiss()
     }
     
@@ -158,7 +160,8 @@ struct EditCustomerView: View {
         customer.isActive = false
         customer.updatedAt = Date()
         try? modelContext.save()
-        Task { await syncManager.pushCustomerToCloud(customer) }
+        // UPDATED PUSH CALL
+        Task { await syncManager.pushCustomerToCloud(customer, context: modelContext, isOnline: networkMonitor.isConnected) }
         dismiss()
         onDelete?()
     }

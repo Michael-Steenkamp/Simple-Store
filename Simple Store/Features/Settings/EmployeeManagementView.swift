@@ -12,6 +12,7 @@ struct EmployeeManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SyncManager.self) private var syncManager
     @Environment(SessionManager.self) private var session
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \Employee.name) private var allEmployees: [Employee]
     
@@ -118,7 +119,8 @@ struct EmployeeManagementView: View {
         guard isAdmin else { return }
         employee.isActive = false
         try? modelContext.save()
-        Task { await syncManager.pushEmployeeToCloud(employee) }
+        // UPDATED PUSH CALL
+        Task { await syncManager.pushEmployeeToCloud(employee, context: modelContext, isOnline: networkMonitor.isConnected) }
     }
 }
 
@@ -147,6 +149,7 @@ struct AddEmployeeView: View {
     
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @State private var name: String = ""
     var body: some View {
@@ -169,7 +172,8 @@ struct AddEmployeeView: View {
                         modelContext.insert(newEmployee)
                         try? modelContext.save()
                         
-                        Task { await syncManager.pushEmployeeToCloud(newEmployee) }
+                        // UPDATED PUSH CALL
+                        Task { await syncManager.pushEmployeeToCloud(newEmployee, context: modelContext, isOnline: networkMonitor.isConnected) }
                         dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -183,6 +187,7 @@ struct AddEmployeeView: View {
 struct ArchivedEmployeesView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SyncManager.self) private var syncManager
+    @Environment(NetworkMonitor.self) private var networkMonitor // NEW
     
     @Query(sort: \Employee.name) private var allEmployees: [Employee]
     
@@ -245,13 +250,15 @@ struct ArchivedEmployeesView: View {
     private func restoreEmployee(_ employee: Employee) {
         employee.isActive = true
         try? modelContext.save()
-        Task { await syncManager.pushEmployeeToCloud(employee) }
+        // UPDATED PUSH CALL
+        Task { await syncManager.pushEmployeeToCloud(employee, context: modelContext, isOnline: networkMonitor.isConnected) }
     }
     
     private func permanentlyDelete(_ employee: Employee) {
         employee.isActive = false
         Task {
-            await syncManager.pushEmployeeToCloud(employee)
+            // UPDATED PUSH CALL
+            await syncManager.pushEmployeeToCloud(employee, context: modelContext, isOnline: networkMonitor.isConnected)
             modelContext.delete(employee)
             try? modelContext.save()
         }
