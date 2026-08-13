@@ -2,26 +2,38 @@
 //  SessionManager.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-08-10.
-//
 
 import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
 
+/// Manages user authentication, workspace (tenant) isolation, and global session state.
+/// Acts as the central `@MainActor` source of truth for the active user's permissions and current store context.
 @Observable
 @MainActor
 final class SessionManager {
+    
+    // MARK: - State Properties
+    
+    /// The currently authenticated user and their workspace profile.
     var currentUser: AppUser? {
         didSet {
             subscriptionManager.isSystemAdmin = currentUser?.isSystemAdmin ?? false
         }
     }
+    
+    /// Indicates if the session manager is currently performing a network or authentication task.
     var isLoading: Bool = true
+    
+    /// A user-facing error message, if any recent operation failed.
     var errorMessage: String?
     
+    // MARK: - Dependencies
+    
     let subscriptionManager = SubscriptionManager()
-    private var db: Firestore { Firestore.firestore() }
+    private let db = Firestore.firestore()
+    
+    // MARK: - Initialization
     
     init() {
         Task {
@@ -29,6 +41,9 @@ final class SessionManager {
         }
     }
     
+    // MARK: - Authentication & Routing
+    
+    /// Validates the current Firebase authentication state and fetches the associated `AppUser` profile.
     func checkAuthenticationState() async {
         isLoading = true
         defer { isLoading = false }
@@ -40,50 +55,48 @@ final class SessionManager {
         
         do {
             let snapshot = try await db.collection("users").document(authUser.uid).getDocument()
-            if var userProfile = try snapshot.data(as: AppUser?.self) {
-                
-                // MARK: - Smart Startup Routing
-                if let autoJoin = userProfile.autoJoinStoreId, userProfile.storeIds.contains(autoJoin) {
-                    // If they have an auto-join preference, load them right in
-                    userProfile.activeStoreId = autoJoin
-                    try? await db.collection("users").document(authUser.uid).updateData(["activeStoreId": autoJoin])
-                } else {
-                    // Force them to the "My Stores" hub on every launch to pick a context
-                    userProfile.activeStoreId = nil
-                    try? await db.collection("users").document(authUser.uid).updateData(["activeStoreId": FieldValue.delete()])
-                }
-                
-                self.currentUser = userProfile
-            } else {
-                self.errorMessage = "User profile not found. Please re-register."
+            guard var userProfile = try snapshot.data(as: AppUser?.self) else {
+                errorMessage = "User profile not found. Please re-register."
                 try? Auth.auth().signOut()
+                return
             }
+            
+            if let autoJoin = userProfile.autoJoinStoreId, userProfile.storeIds.contains(autoJoin) {
+                userProfile.activeStoreId = autoJoin
+                try await db.collection("users").document(authUser.uid).updateData(["activeStoreId": autoJoin])
+            } else {
+                userProfile.activeStoreId = nil
+                try await db.collection("users").document(authUser.uid).updateData(["activeStoreId": FieldValue.delete()])
+            }
+            
+            currentUser = userProfile
         } catch {
-            self.errorMessage = "Failed to fetch user data: \(error.localizedDescription)"
+            errorMessage = "Failed to fetch user data: \(error.localizedDescription)"
         }
     }
     
-    // MARK: - Safely performs the database swap with a crossfade animation
-        func switchActiveStore(to newStoreId: String) async {
-            guard let uid = Auth.auth().currentUser?.uid else { return }
-            
-            do {
-                try await db.collection("users").document(uid).updateData([
-                    "activeStoreId": newStoreId
-                ])
-                
-                // This animation block ensures the root view crossfades smoothly
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    self.currentUser?.activeStoreId = newStoreId
-                }
-            } catch {
-                self.errorMessage = "Failed to switch workspaces."
-            }
-        }
+    // MARK: - Workspace Operations
     
+    /// Switches the active workspace (tenant) context for the current user.
+    /// - Parameter newStoreId: The unique identifier of the target store.
+    func switchActiveStore(to newStoreId: String) async {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        
+        do {
+            try await db.collection("users").document(uid).updateData([
+                "activeStoreId": newStoreId
+            ])
+            currentUser?.activeStoreId = newStoreId
+        } catch {
+            errorMessage = "Failed to switch workspaces."
+        }
+    }
+    
+    /// Links the current user to an existing store workspace as a customer.
+    /// - Parameter storeId: The unique identifier of the target store.
     func joinStore(storeId: String) async {
         guard let uid = Auth.auth().currentUser?.uid else {
-            self.errorMessage = "Authentication error. Please sign in again."
+            errorMessage = "Authentication error. Please sign in again."
             return
         }
         
@@ -93,11 +106,10 @@ final class SessionManager {
         do {
             let storeDoc = try await db.collection("stores").document(storeId).getDocument()
             guard storeDoc.exists else {
-                self.errorMessage = "Store not found. It may have been deleted."
+                errorMessage = "Store not found. It may have been deleted."
                 return
             }
             
-            // Add to workspaces array and set role for this specific store
             try await db.collection("users").document(uid).updateData([
                 "storeIds": FieldValue.arrayUnion([storeId]),
                 "storeRoles.\(storeId)": UserRole.customer.rawValue,
@@ -105,7 +117,7 @@ final class SessionManager {
             ])
             
             let newRecordId = UUID().uuidString
-            let userName = self.currentUser?.name ?? "Guest User"
+            let userName = currentUser?.name ?? "Guest User"
             let nameParts = userName.components(separatedBy: " ")
             let first = nameParts.first ?? "Guest"
             let last = nameParts.dropFirst().joined(separator: " ")
@@ -115,7 +127,7 @@ final class SessionManager {
                 "storeId": storeId,
                 "firstName": first,
                 "lastName": last,
-                "email": self.currentUser?.email ?? "",
+                "email": currentUser?.email ?? "",
                 "phone": "",
                 "isActive": true,
                 "updatedAt": Timestamp(),
@@ -123,19 +135,20 @@ final class SessionManager {
             ]
             try await db.collection("customers").document(newRecordId).setData(custData)
             
-            self.currentUser?.storeIds.append(storeId)
-            self.currentUser?.storeRoles[storeId] = UserRole.customer.rawValue
-            self.currentUser?.activeStoreId = storeId
-            self.errorMessage = nil
+            currentUser?.storeIds.append(storeId)
+            currentUser?.storeRoles[storeId] = UserRole.customer.rawValue
+            currentUser?.activeStoreId = storeId
+            errorMessage = nil
             
         } catch {
-            self.errorMessage = "Failed to join store: \(error.localizedDescription)"
+            errorMessage = "Failed to join store: \(error.localizedDescription)"
         }
     }
     
+    /// Initializes a new retail tenant and grants the current user administrative privileges.
     func createStore(storeName: String, storeEmail: String, storePhone: String, storeAddress: String, logoData: Data?) async throws {
         guard let authUser = Auth.auth().currentUser, let appUser = currentUser else {
-            throw NSError(domain: "", code: 401, userInfo: [NSLocalizedDescriptionKey: "Authentication error. Please sign in again."])
+            throw NSError(domain: "SessionManager", code: 401, userInfo: [NSLocalizedDescriptionKey: "Authentication error. Please sign in again."])
         }
         
         isLoading = true
@@ -143,10 +156,9 @@ final class SessionManager {
         
         let newStoreId = UUID().uuidString
         var logoURL = ""
-        if let data = logoData {
-            if let url = try? await StorageManager.shared.uploadStoreLogo(data: data, storeId: newStoreId) {
-                logoURL = url
-            }
+        
+        if let data = logoData, let url = try? await StorageManager.shared.uploadStoreLogo(data: data, storeId: newStoreId) {
+            logoURL = url
         }
         
         let storeData: [String: Any] = [
@@ -158,9 +170,9 @@ final class SessionManager {
             "storeLogoURL": logoURL,
             "createdAt": Timestamp()
         ]
+        
         try await db.collection("stores").document(newStoreId).setData(storeData)
         
-        // Add to array, set admin role for this specific store, make active
         try await db.collection("users").document(authUser.uid).updateData([
             "storeIds": FieldValue.arrayUnion([newStoreId]),
             "storeRoles.\(newStoreId)": UserRole.admin.rawValue,
@@ -176,10 +188,11 @@ final class SessionManager {
         ]
         try await db.collection("employees").document(newEmpId).setData(empData)
         
-        self.currentUser?.storeIds.append(newStoreId)
-        self.currentUser?.storeRoles[newStoreId] = UserRole.admin.rawValue
-        self.currentUser?.activeStoreId = newStoreId
+        currentUser?.storeIds.append(newStoreId)
+        currentUser?.storeRoles[newStoreId] = UserRole.admin.rawValue
+        currentUser?.activeStoreId = newStoreId
         
+        // Cache basic store info for offline availability / quick retrieval
         UserDefaults.standard.set(storeName, forKey: "storeName")
         UserDefaults.standard.set(storeEmail, forKey: "storeEmail")
         UserDefaults.standard.set(storePhone, forKey: "storePhone")
@@ -189,6 +202,7 @@ final class SessionManager {
     
     // MARK: - Account & Store Deletion Rules
     
+    /// Permanently deletes the current user account and soft-deletes their associated records within active workspaces.
     func deleteCurrentAccount() async throws {
         guard let authUser = Auth.auth().currentUser, let appUser = currentUser else { return }
         
@@ -199,7 +213,7 @@ final class SessionManager {
                 .getDocuments()
             
             if adminQuery.documents.count <= 1 {
-                throw NSError(domain: "", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot delete account. You are the sole administrator of an active store. Please assign another admin or delete the store entirely."])
+                throw NSError(domain: "SessionManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "Cannot delete account. You are the sole administrator of an active store. Please assign another admin or delete the store entirely."])
             }
         }
         
@@ -221,39 +235,45 @@ final class SessionManager {
         try await authUser.delete()
         
         try? Auth.auth().signOut()
-        self.currentUser = nil
+        currentUser = nil
     }
     
+    /// Permanently deletes a store and completely purges its sub-collections.
+    /// - Note: Executes collection deletions concurrently using `TaskGroup` for performance.
     func deleteStore(storeId: String) async throws {
         guard let appUser = currentUser, appUser.role == .admin else {
-            throw NSError(domain: "", code: 403, userInfo: [NSLocalizedDescriptionKey: "Unauthorized action."])
+            throw NSError(domain: "SessionManager", code: 403, userInfo: [NSLocalizedDescriptionKey: "Unauthorized action."])
         }
         
-        let collections = ["inventory", "customers", "employees", "transactions", "tags", "customerStatuses"]
-        for col in collections {
-            let docs = try await db.collection(col).whereField("storeId", isEqualTo: storeId).getDocuments()
-            for doc in docs.documents {
-                try await doc.reference.delete()
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            let collections = ["inventory", "customers", "employees", "transactions", "tags", "customerStatuses"]
+            for col in collections {
+                group.addTask { [db] in
+                    let docs = try await db.collection(col).whereField("storeId", isEqualTo: storeId).getDocuments()
+                    for doc in docs.documents {
+                        try await doc.reference.delete()
+                    }
+                }
             }
+            try await group.waitForAll()
         }
         
         try await db.collection("stores").document(storeId).delete()
         
-        // Remove this store from the user's workspaces
         if let authUser = Auth.auth().currentUser {
             try await db.collection("users").document(authUser.uid).updateData([
                 "storeIds": FieldValue.arrayRemove([storeId]),
                 "storeRoles.\(storeId)": FieldValue.delete(),
-                "activeStoreId": FieldValue.delete() // Forces them to pick a new active store on next launch
+                "activeStoreId": FieldValue.delete()
             ])
             
-            self.currentUser?.storeIds.removeAll(where: { $0 == storeId })
-            self.currentUser?.storeRoles.removeValue(forKey: storeId)
-            self.currentUser?.activeStoreId = self.currentUser?.storeIds.first
+            currentUser?.storeIds.removeAll(where: { $0 == storeId })
+            currentUser?.storeRoles.removeValue(forKey: storeId)
+            currentUser?.activeStoreId = currentUser?.storeIds.first
         }
     }
     
-    // MARK: - Admin Promotion Pipelines
+    // MARK: - Role Management Pipelines
     
     func promoteCustomerToEmployee(customerEmail: String, customerName: String) async throws {
         guard let storeId = currentUser?.activeStoreId, currentUser?.role == .admin else { return }
@@ -264,7 +284,7 @@ final class SessionManager {
             .getDocuments()
         
         guard let userDoc = snapshot.documents.first else {
-            throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find a registered app account matching this customer's email."])
+            throw NSError(domain: "SessionManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find a registered app account matching this customer's email."])
         }
         
         try await userDoc.reference.updateData([
@@ -290,7 +310,7 @@ final class SessionManager {
             .getDocuments()
         
         guard let userDoc = snapshot.documents.first else {
-            throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find a registered app account matching this exact employee name."])
+            throw NSError(domain: "SessionManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find a registered app account matching this exact employee name."])
         }
         
         try await userDoc.reference.updateData([
@@ -321,7 +341,7 @@ final class SessionManager {
             .getDocuments()
         
         guard let userDoc = snapshot.documents.first else {
-            throw NSError(domain: "", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find a registered app account matching this employee name."])
+            throw NSError(domain: "SessionManager", code: 404, userInfo: [NSLocalizedDescriptionKey: "Could not find a registered app account matching this employee name."])
         }
         
         try await userDoc.reference.updateData([
@@ -352,63 +372,61 @@ final class SessionManager {
     }
     
     // MARK: - Workspace Preferences
+    
+    /// Toggles whether the application should bypass the Store Selection screen and route directly into a specific store.
+    func toggleAutoJoin(storeId: String) async {
+        guard let uid = Auth.auth().currentUser?.uid, let user = currentUser else { return }
         
-        func toggleAutoJoin(storeId: String) async {
-            guard let uid = Auth.auth().currentUser?.uid, let user = currentUser else { return }
-            
-            // If they click the star on a store that is already auto-join, turn it off. Otherwise, set it.
-            let newValue = user.autoJoinStoreId == storeId ? nil : storeId
-            
-            do {
-                try await db.collection("users").document(uid).updateData([
-                    "autoJoinStoreId": newValue != nil ? newValue! : FieldValue.delete()
-                ])
-                self.currentUser?.autoJoinStoreId = newValue
-            } catch {
-                self.errorMessage = "Failed to update auto-join preference."
-            }
-        }
+        let newValue = user.autoJoinStoreId == storeId ? nil : storeId
         
-        func leaveStore(storeId: String) async {
-            guard let uid = Auth.auth().currentUser?.uid, let appUser = currentUser else { return }
-            isLoading = true
-            defer { isLoading = false }
-            
-            do {
-                // 1. Prepare updates and only delete autoJoinStoreId if it matches the store they are leaving
-                var updates: [String: Any] = [
-                    "storeIds": FieldValue.arrayRemove([storeId]),
-                    "storeRoles.\(storeId)": FieldValue.delete()
-                ]
-                
-                if appUser.autoJoinStoreId == storeId {
-                    updates["autoJoinStoreId"] = FieldValue.delete()
-                }
-                
-                try await db.collection("users").document(uid).updateData(updates)
-                
-                // 2. Soft-delete their staff/customer directory record in the database
-                let role = appUser.storeRoles[storeId]
-                if role == UserRole.customer.rawValue {
-                    let match = try await db.collection("customers").whereField("storeId", isEqualTo: storeId).whereField("email", isEqualTo: appUser.email ?? "").getDocuments()
-                    for doc in match.documents {
-                        try await doc.reference.updateData(["firstName": "Left", "lastName": "Store", "isActive": false])
-                    }
-                } else if role == UserRole.employee.rawValue || role == UserRole.admin.rawValue {
-                    let match = try await db.collection("employees").whereField("storeId", isEqualTo: storeId).whereField("name", isEqualTo: appUser.name).getDocuments()
-                    for doc in match.documents {
-                        try await doc.reference.updateData(["isActive": false])
-                    }
-                }
-                
-                // 3. Update Local State
-                self.currentUser?.storeIds.removeAll(where: { $0 == storeId })
-                self.currentUser?.storeRoles.removeValue(forKey: storeId)
-                if self.currentUser?.autoJoinStoreId == storeId { self.currentUser?.autoJoinStoreId = nil }
-                if self.currentUser?.activeStoreId == storeId { self.currentUser?.activeStoreId = nil }
-                
-            } catch {
-                self.errorMessage = "Failed to leave store: \(error.localizedDescription)"
-            }
+        do {
+            try await db.collection("users").document(uid).updateData([
+                "autoJoinStoreId": newValue != nil ? newValue! : FieldValue.delete()
+            ])
+            currentUser?.autoJoinStoreId = newValue
+        } catch {
+            errorMessage = "Failed to update auto-join preference."
         }
+    }
+    
+    /// Disconnects the user from a workspace and soft-deletes their directory presence within that store.
+    func leaveStore(storeId: String) async {
+        guard let uid = Auth.auth().currentUser?.uid, let appUser = currentUser else { return }
+        isLoading = true
+        defer { isLoading = false }
+        
+        do {
+            var updates: [String: Any] = [
+                "storeIds": FieldValue.arrayRemove([storeId]),
+                "storeRoles.\(storeId)": FieldValue.delete()
+            ]
+            
+            if appUser.autoJoinStoreId == storeId {
+                updates["autoJoinStoreId"] = FieldValue.delete()
+            }
+            
+            try await db.collection("users").document(uid).updateData(updates)
+            
+            let role = appUser.storeRoles[storeId]
+            if role == UserRole.customer.rawValue {
+                let match = try await db.collection("customers").whereField("storeId", isEqualTo: storeId).whereField("email", isEqualTo: appUser.email ?? "").getDocuments()
+                for doc in match.documents {
+                    try await doc.reference.updateData(["firstName": "Left", "lastName": "Store", "isActive": false])
+                }
+            } else if role == UserRole.employee.rawValue || role == UserRole.admin.rawValue {
+                let match = try await db.collection("employees").whereField("storeId", isEqualTo: storeId).whereField("name", isEqualTo: appUser.name).getDocuments()
+                for doc in match.documents {
+                    try await doc.reference.updateData(["isActive": false])
+                }
+            }
+            
+            currentUser?.storeIds.removeAll(where: { $0 == storeId })
+            currentUser?.storeRoles.removeValue(forKey: storeId)
+            if currentUser?.autoJoinStoreId == storeId { currentUser?.autoJoinStoreId = nil }
+            if currentUser?.activeStoreId == storeId { currentUser?.activeStoreId = nil }
+            
+        } catch {
+            errorMessage = "Failed to leave store: \(error.localizedDescription)"
+        }
+    }
 }

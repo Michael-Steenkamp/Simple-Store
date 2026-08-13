@@ -2,17 +2,18 @@
 //  SimpleStoreApp.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-07-18.
-//
 
 import SwiftUI
 import SwiftData
 import FirebaseCore
 
+/// The main entry point for the Simple Store application.
 @main
 struct SimpleStoreApp: App {
+    
     // MARK: - Global State Managers
     
+    /// Handles background synchronization between local SwiftData and remote Firebase Firestore.
     @State private var syncManager = SyncManager()
     
     /// Controls the application session, user profile, and entitlement access.
@@ -23,13 +24,12 @@ struct SimpleStoreApp: App {
     
     // MARK: - Local Data Container
     
+    /// The shared SwiftData model container for offline-first operations.
     let sharedContainer: ModelContainer
     
     init() {
-        // 1. Initialize the Firebase backend for hybrid synchronization and auth
         FirebaseApp.configure()
         
-        // 2. Initialize the local SwiftData container for offline-first POS operations
         do {
             sharedContainer = try ModelContainer(
                 for: StoreItem.self,
@@ -40,20 +40,17 @@ struct SimpleStoreApp: App {
                 Employee.self
             )
         } catch {
-            fatalError("Could not create ModelContainer: \(error)")
+            fatalError("Failed to initialize SwiftData ModelContainer: \(error.localizedDescription)")
         }
     }
     
     var body: some Scene {
         WindowGroup {
-            // The LaunchRouterView replaces the static SplashScreenView
-            // to dynamically handle onboarding, authentication, and role-based routing.
             LaunchRouterView()
                 .environment(sessionManager)
                 .environment(syncManager)
                 .environment(cartManager)
         }
-        // Attach the local POS database to the SwiftUI environment
         .modelContainer(sharedContainer)
     }
 }

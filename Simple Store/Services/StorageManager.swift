@@ -2,57 +2,92 @@
 //  StorageManager.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-08-11.
-//
 
 import Foundation
 import FirebaseStorage
 
-@Observable
-final class StorageManager {
-    static let shared = StorageManager()
-    private let storage = Storage.storage().reference()
+/// A thread-safe service responsible for handling asset uploads and deletions in Firebase Storage.
+///
+/// Manages workspace logos and inventory item media assets structured under store tenant paths.
+public final class StorageManager: Sendable {
     
-    private init() {}
+    // MARK: - Singleton
     
-    // MARK: - Store Logo Upload
-    func uploadStoreLogo(data: Data, storeId: String) async throws -> String {
-        let logoRef = storage.child("stores/\(storeId)/logo.jpg")
+    /// The shared singleton instance of `StorageManager`.
+    public static let shared = StorageManager()
+    
+    // MARK: - Private Properties
+    
+    private let storageRef: StorageReference
+    
+    // MARK: - Initialization
+    
+    private init() {
+        self.storageRef = Storage.storage().reference()
+    }
+    
+    // MARK: - Store Logo Operations
+    
+    /// Uploads a JPEG store logo image to Firebase Storage for a given store workspace.
+    ///
+    /// - Parameters:
+    ///   - data: The raw JPEG image binary data to upload.
+    ///   - storeId: The unique identifier of the target store workspace.
+    /// - Returns: The HTTPS download URL string for the uploaded store logo asset.
+    /// - Throws: An error if the data upload or download URL retrieval fails.
+    public func uploadStoreLogo(data: Data, storeId: String) async throws -> String {
+        let logoRef = storageRef.child("stores/\(storeId)/logo.jpg")
         
-        // Compress image metadata to save bandwidth
         let metadata = StorageMetadata()
         metadata.contentType = "image/jpeg"
         
-        let _ = try await logoRef.putDataAsync(data, metadata: metadata)
+        _ = try await logoRef.putDataAsync(data, metadata: metadata)
         let downloadURL = try await logoRef.downloadURL()
         
         return downloadURL.absoluteString
     }
     
-    // MARK: - Item Image Upload
-    func uploadItemImage(data: Data, storeId: String, itemId: String) async throws -> String {
-        let itemRef = storage.child("stores/\(storeId)/items/\(itemId).jpg")
+    // MARK: - Item Image Operations
+    
+    /// Uploads a product item JPEG image to Firebase Storage under the specific store workspace hierarchy.
+    ///
+    /// - Parameters:
+    ///   - data: The raw JPEG image binary data to upload.
+    ///   - storeId: The unique identifier of the store owning the item.
+    ///   - itemId: The unique identifier of the item.
+    /// - Returns: The HTTPS download URL string for the uploaded product image asset.
+    /// - Throws: An error if the data upload or download URL retrieval fails.
+    public func uploadItemImage(data: Data, storeId: String, itemId: String) async throws -> String {
+        let itemRef = storageRef.child("stores/\(storeId)/items/\(itemId).jpg")
         
         let metadata = StorageMetadata()
         metadata.contentType = "image/jpeg"
         
-        let _ = try await itemRef.putDataAsync(data, metadata: metadata)
+        _ = try await itemRef.putDataAsync(data, metadata: metadata)
         let downloadURL = try await itemRef.downloadURL()
         
         return downloadURL.absoluteString
     }
     
     // MARK: - Deletion Helpers
-    func deleteItemImage(storeId: String, itemId: String) async {
-        let itemRef = storage.child("stores/\(storeId)/items/\(itemId).jpg")
+    
+    /// Deletes a product item image asset from Firebase Storage.
+    ///
+    /// - Parameters:
+    ///   - storeId: The unique identifier of the store owning the item.
+    ///   - itemId: The unique identifier of the target item.
+    public func deleteItemImage(storeId: String, itemId: String) async {
+        let itemRef = storageRef.child("stores/\(storeId)/items/\(itemId).jpg")
         try? await itemRef.delete()
     }
     
-    func deleteStoreFolder(storeId: String) async {
-        // Note: Firebase Storage doesn't support deleting entire folders directly from the client SDK.
-        // For a production app, you would typically trigger a Firebase Cloud Function to wipe the folder,
-        // or iterate through known item IDs to delete them. We will handle individual deletions as they happen.
-        let logoRef = storage.child("stores/\(storeId)/logo.jpg")
+    /// Deletes top-level store workspace assets (such as the store logo) from Firebase Storage.
+    ///
+    /// - Note: The Firebase Storage Client SDK does not support client-side recursive folder deletion.
+    ///   For complete store storage bucket cleanup, offload folder deletion to a Firebase Cloud Function.
+    /// - Parameter storeId: The unique identifier of the store workspace being deleted.
+    public func deleteStoreFolder(storeId: String) async {
+        let logoRef = storageRef.child("stores/\(storeId)/logo.jpg")
         try? await logoRef.delete()
     }
 }
