@@ -1,22 +1,27 @@
 //
-//  BarcodeScannerView.swift
-//  Simple Inventory
-//
-//  Created by Michael Steenkamp on 2026-07-20.
+// BarcodeScannerView.swift
+// Simple Store
 //
 
 import SwiftUI
 import VisionKit
 
-struct BarcodeScannerView: View {
-    @Binding var scannedCode: String
+/// A reusable, standalone barcode scanner view that leverages VisionKit for high-performance scanning.
+/// This view automatically handles camera permissions, UI overlays, and gracefully falls back on unsupported devices.
+@MainActor
+public struct BarcodeScannerView: View {
+    @Binding public var scannedCode: String
     @Environment(\.dismiss) private var dismiss
     
     @State private var refocusTrigger = false
     @State private var focusLocation: CGPoint? = nil
     @State private var isShowingFocus = false
     
-    var body: some View {
+    public init(scannedCode: Binding<String>) {
+        self._scannedCode = scannedCode
+    }
+    
+    public var body: some View {
         NavigationStack {
             Group {
                 if DataScannerViewController.isSupported && DataScannerViewController.isAvailable {
@@ -35,8 +40,7 @@ struct BarcodeScannerView: View {
         }
     }
     
-    // MARK: - Interfaces
-    
+    /// The primary scanning interface featuring a visual reticle and tap-to-focus capabilities.
     private var scannerInterface: some View {
         ZStack {
             DataScannerBridge(scannedCode: $scannedCode, refocusTrigger: $refocusTrigger) {
@@ -85,12 +89,14 @@ struct BarcodeScannerView: View {
             isShowingFocus = true
             refocusTrigger.toggle()
             
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            Task {
+                try? await Task.sleep(for: .seconds(1.0))
                 isShowingFocus = false
             }
         }
     }
     
+    /// A fallback view presented when VisionKit or camera hardware is unavailable on the current device.
     private var unsupportedDeviceView: some View {
         VStack(spacing: 16) {
             Image(systemName: "exclamationmark.triangle.fill")
@@ -107,14 +113,14 @@ struct BarcodeScannerView: View {
     }
 }
 
-// MARK: - VisionKit Bridge
-
-struct DataScannerBridge: UIViewControllerRepresentable {
-    @Binding var scannedCode: String
-    @Binding var refocusTrigger: Bool
-    var onRecognized: () -> Void
+/// A thread-safe, concurrency-compliant bridge integrating `DataScannerViewController` into the SwiftUI environment.
+@MainActor
+public struct DataScannerBridge: UIViewControllerRepresentable {
+    @Binding public var scannedCode: String
+    @Binding public var refocusTrigger: Bool
+    public var onRecognized: () -> Void
     
-    func makeUIViewController(context: Context) -> DataScannerViewController {
+    public func makeUIViewController(context: Context) -> DataScannerViewController {
         let viewController = DataScannerViewController(
             recognizedDataTypes: [.barcode()],
             qualityLevel: .accurate,
@@ -129,21 +135,24 @@ struct DataScannerBridge: UIViewControllerRepresentable {
         return viewController
     }
     
-    func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {
+    public func updateUIViewController(_ uiViewController: DataScannerViewController, context: Context) {
         if context.coordinator.lastRefocusTrigger != refocusTrigger {
             context.coordinator.lastRefocusTrigger = refocusTrigger
             uiViewController.stopScanning()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            
+            Task {
+                try? await Task.sleep(for: .milliseconds(100))
                 try? uiViewController.startScanning()
             }
         }
     }
     
-    func makeCoordinator() -> Coordinator {
+    public func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
     
-    class Coordinator: NSObject, DataScannerViewControllerDelegate {
+    /// The delegate coordinator responsible for managing VisionKit callbacks and safely crossing Swift 6 actor boundaries.
+    public class Coordinator: NSObject, DataScannerViewControllerDelegate {
         let parent: DataScannerBridge
         var lastRefocusTrigger: Bool = false
         
@@ -151,11 +160,13 @@ struct DataScannerBridge: UIViewControllerRepresentable {
             self.parent = parent
         }
         
-        func dataScanner(_ dataScanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
+        @MainActor
+        public func dataScanner(_ dataScanner: DataScannerViewController, didAdd addedItems: [RecognizedItem], allItems: [RecognizedItem]) {
             if let firstItem = addedItems.first,
                case .barcode(let barcode) = firstItem,
                let codeString = barcode.payloadStringValue {
-                DispatchQueue.main.async {
+                
+                Task { @MainActor in
                     self.parent.scannedCode = codeString
                     self.parent.onRecognized()
                 }

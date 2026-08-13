@@ -1,23 +1,27 @@
 //
-//  ImagePicker.swift
-//  Simple Store
-//
-//  Created by Michael Steenkamp on 2026-07-20.
+// ImagePicker.swift
+// Simple Store
 //
 
 import SwiftUI
 import PhotosUI
 
-// MARK: - Global Picker Wrapper
-struct ImagePicker: View {
-    var sourceType: UIImagePickerController.SourceType
-    @Binding var selectedImage: Data?
+/// A modular, concurrency-safe wrapper that seamlessly transitions between native image selection and a custom cropping interface.
+@MainActor
+public struct ImagePicker: View {
+    public var sourceType: UIImagePickerController.SourceType
+    @Binding public var selectedImage: Data?
     @Environment(\.dismiss) private var dismiss
     
     @State private var inputImage: UIImage? = nil
     @State private var isShowingCropView = false
     
-    var body: some View {
+    public init(sourceType: UIImagePickerController.SourceType, selectedImage: Binding<Data?>) {
+        self.sourceType = sourceType
+        self._selectedImage = selectedImage
+    }
+    
+    public var body: some View {
         ZStack {
             if isShowingCropView, let inputImage = inputImage {
                 ImageCropView(
@@ -41,13 +45,19 @@ struct ImagePicker: View {
     }
 }
 
-// MARK: - Native Image Picker
-struct NativeImagePicker: UIViewControllerRepresentable {
-    var sourceType: UIImagePickerController.SourceType
-    @Binding var inputImage: UIImage?
+/// A thread-safe bridge to UIKit's `UIImagePickerController`, fully isolated to the main actor to prevent data races during image selection.
+@MainActor
+public struct NativeImagePicker: UIViewControllerRepresentable {
+    public var sourceType: UIImagePickerController.SourceType
+    @Binding public var inputImage: UIImage?
     @Environment(\.dismiss) private var dismiss
     
-    func makeUIViewController(context: Context) -> UIImagePickerController {
+    public init(sourceType: UIImagePickerController.SourceType, inputImage: Binding<UIImage?>) {
+        self.sourceType = sourceType
+        self._inputImage = inputImage
+    }
+    
+    public func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.sourceType = sourceType
         picker.allowsEditing = false
@@ -55,20 +65,22 @@ struct NativeImagePicker: UIViewControllerRepresentable {
         return picker
     }
     
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    public func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
     
-    func makeCoordinator() -> Coordinator {
+    public func makeCoordinator() -> Coordinator {
         Coordinator(self)
     }
     
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        var parent: NativeImagePicker
+    /// The delegate coordinator responsible for handling media selection lifecycle events and safely propagating the data back to SwiftUI.
+    public class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+        let parent: NativeImagePicker
         
         init(_ parent: NativeImagePicker) {
             self.parent = parent
         }
         
-        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
+        @MainActor
+        public func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey : Any]) {
             if let image = info[.originalImage] as? UIImage {
                 parent.inputImage = image
             } else {
@@ -76,24 +88,32 @@ struct NativeImagePicker: UIViewControllerRepresentable {
             }
         }
         
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        @MainActor
+        public func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             parent.dismiss()
         }
     }
 }
 
-// MARK: - Image Crop View with Circular Guide Overlay
-struct ImageCropView: View {
-    let image: UIImage
-    @Binding var croppedData: Data?
-    var onDismiss: () -> Void
+/// A hardware-accelerated interactive view for precise image cropping and scaling, leveraging `@MainActor` bound `ImageRenderer` for deterministic exports.
+@MainActor
+public struct ImageCropView: View {
+    public let image: UIImage
+    @Binding public var croppedData: Data?
+    public var onDismiss: () -> Void
     
     @State private var scale: CGFloat = 1.0
     @State private var lastScale: CGFloat = 1.0
     @State private var offset: CGSize = .zero
     @State private var lastOffset: CGSize = .zero
     
-    var body: some View {
+    public init(image: UIImage, croppedData: Binding<Data?>, onDismiss: @escaping () -> Void) {
+        self.image = image
+        self._croppedData = croppedData
+        self.onDismiss = onDismiss
+    }
+    
+    public var body: some View {
         NavigationStack {
             VStack {
                 Spacer()
@@ -127,7 +147,8 @@ struct ImageCropView: View {
         }
     }
     
-    var cropCanvas: some View {
+    /// The interactive image canvas utilizing modern gesture modifiers for smooth pan and zoom operations.
+    private var cropCanvas: some View {
         Image(uiImage: image)
             .resizable()
             .scaledToFill()
@@ -150,7 +171,6 @@ struct ImageCropView: View {
             .clipped()
     }
     
-    @MainActor
     private func saveCrop() {
         // Renders the 300x300 square content so item cards display cleanly
         let squareView = cropCanvas

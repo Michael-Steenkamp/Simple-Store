@@ -1,18 +1,16 @@
 //
-//  SharedComponents.swift
-//  Simple Inventory
-//
-//  Created by Michael Steenkamp on 2026-07-20.
+// SharedComponents.swift
+// Simple Store
 //
 
 import SwiftUI
 
-// MARK: - Tags & Labels
-
-struct TagPillView: View {
-    let name: String
+/// A highly reusable visual tag component that generates a consistent, deterministic background color based on the provided string.
+@MainActor
+public struct TagPillView: View {
+    public let name: String
     
-    var body: some View {
+    public var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "tag.fill")
                 .font(.system(size: 10))
@@ -33,18 +31,20 @@ struct TagPillView: View {
     }
 }
 
-struct FormTagRow: View {
-    let tags: [ItemTag]
+/// A horizontal scrolling row of tags, completely decoupled from the data layer.
+@MainActor
+public struct FormTagRow: View {
+    public let tagNames: [String]
     
-    var body: some View {
-        if tags.isEmpty {
+    public var body: some View {
+        if tagNames.isEmpty {
             Text("No tags selected")
                 .foregroundColor(.secondary)
         } else {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    ForEach(tags) { tag in
-                        TagPillView(name: tag.name)
+                    ForEach(tagNames, id: \.self) { name in
+                        TagPillView(name: name)
                     }
                 }
                 .padding(.vertical, 4)
@@ -53,14 +53,14 @@ struct FormTagRow: View {
     }
 }
 
-// MARK: - Interactive Filter Elements
-
-struct FilterPill: View {
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
+/// A selectable filter pill used primarily in horizontal scroll views for scoping list data.
+@MainActor
+public struct FilterPill: View {
+    public let title: String
+    public let isSelected: Bool
+    public let action: () -> Void
     
-    var body: some View {
+    public var body: some View {
         Button(action: action) {
             Text(title)
                 .font(.subheadline)
@@ -76,15 +76,15 @@ struct FilterPill: View {
     }
 }
 
-// MARK: - CRM & Contact Elements
-
-struct CopyableContactRow: View {
-    let icon: String
-    let value: String
+/// A contact row that copies its value to the clipboard and provides modern haptic and visual feedback.
+@MainActor
+public struct CopyableContactRow: View {
+    public let icon: String
+    public let value: String
     
     @State private var showCopiedIndicator = false
     
-    var body: some View {
+    public var body: some View {
         Button(action: {
             UIPasteboard.general.string = value
             
@@ -92,8 +92,12 @@ struct CopyableContactRow: View {
             generator.impactOccurred()
             
             withAnimation { showCopiedIndicator = true }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
-                withAnimation { showCopiedIndicator = false }
+            
+            Task {
+                try? await Task.sleep(for: .seconds(1.5))
+                withAnimation {
+                    showCopiedIndicator = false
+                }
             }
         }) {
             HStack(spacing: 12) {
@@ -120,14 +124,14 @@ struct CopyableContactRow: View {
     }
 }
 
-// MARK: - Custom Text Fields
-
-struct ModernTextField: View {
-    let title: String
-    let placeholder: String
-    @Binding var text: String
+/// A modern, reusable text field with a prominent title and an integrated clear button.
+@MainActor
+public struct ModernTextField: View {
+    public let title: String
+    public let placeholder: String
+    @Binding public var text: String
     
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.caption)
@@ -156,11 +160,13 @@ struct ModernTextField: View {
     }
 }
 
-struct ModernCurrencyField: View {
-    let title: String
-    @Binding var text: String
+/// A modern, reusable currency field with a prominent title, currency symbol, and integrated clear button.
+@MainActor
+public struct ModernCurrencyField: View {
+    public let title: String
+    @Binding public var text: String
     
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.caption)
@@ -168,7 +174,7 @@ struct ModernCurrencyField: View {
                 .foregroundColor(.secondary)
             
             HStack {
-                Text("$")
+                Text(Locale.current.currencySymbol ?? "$")
                     .foregroundColor(.secondary)
                 
                 TextField("0.00", text: $text)
@@ -193,13 +199,13 @@ struct ModernCurrencyField: View {
     }
 }
 
-// MARK: - Inventory Form Elements
-
-struct ItemPhotoSelectionButton: View {
-    let imageData: Data?
-    let action: () -> Void
+/// A circular photo selection button utilized heavily in data creation and editing forms.
+@MainActor
+public struct ItemPhotoSelectionButton: View {
+    public let imageData: Data?
+    public let action: () -> Void
     
-    var body: some View {
+    public var body: some View {
         Button(action: action) {
             VStack(spacing: 8) {
                 if let data = imageData, let uiImage = UIImage(data: data) {
@@ -228,12 +234,14 @@ struct ItemPhotoSelectionButton: View {
     }
 }
 
-struct ItemStockStepper<Field: Hashable>: View {
-    @Binding var stockCount: Int
-    var focusedField: FocusState<Field?>.Binding
-    var equals: Field
+/// A highly customized stepper view optimized for fast, accurate inventory stock adjustments.
+@MainActor
+public struct ItemStockStepper<Field: Hashable>: View {
+    @Binding public var stockCount: Int
+    public var focusedField: FocusState<Field?>.Binding
+    public var equals: Field
     
-    var body: some View {
+    public var body: some View {
         HStack {
             Text("Stock")
                 .font(.headline)
@@ -250,7 +258,7 @@ struct ItemStockStepper<Field: Hashable>: View {
                 
                 TextField("0", value: $stockCount, format: .number)
                     .keyboardType(.numberPad)
-                    .focused(focusedField, equals: equals) // Safely applies the enum match
+                    .focused(focusedField, equals: equals)
                     .multilineTextAlignment(.center)
                     .font(.title2.weight(.bold))
                     .frame(width: 60)
