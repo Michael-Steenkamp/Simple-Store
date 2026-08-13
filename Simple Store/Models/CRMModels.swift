@@ -1,50 +1,59 @@
 //
-//  CRMModels.swift
-//  Simple Store
-//
-//  Created by Michael Steenkamp on 2026-07-19.
+// CRMModels.swift
+// Simple Store
 //
 
 import Foundation
 import SwiftData
 
-// MARK: - Customer Status
+// MARK: - Local SwiftData Models
+
+/// A SwiftData model representing a categorization status for a customer.
 @Model
-final class CustomerStatus {
-    var id: UUID = UUID()
-    var name: String = ""
-    var storeId: String?
+public final class CustomerStatus {
+    @Attribute(.unique) public var id: UUID
+    public var name: String
+    public var storeId: String
     
-    var customers: [Customer]?
+    public var customers: [Customer]?
     
-    init(id: UUID = UUID(), name: String, storeId: String?) {
+    public init(id: UUID = UUID(), name: String, storeId: String) {
         self.id = id
         self.name = name
         self.storeId = storeId
     }
 }
 
-// MARK: - Customer
+/// A SwiftData model representing a store customer.
 @Model
-final class Customer {
-    var id: UUID = UUID()
-    var storeId: String?
-    var firstName: String = ""
-    var lastName: String = ""
-    var email: String = ""
-    var phone: String = ""
-    var notes: String = ""
-    var dateAdded: Date = Date()
-    var updatedAt: Date = Date()
-    var isActive: Bool = true
+public final class Customer {
+    @Attribute(.unique) public var id: UUID
+    public var storeId: String
+    public var firstName: String
+    public var lastName: String
+    public var email: String
+    public var phone: String
+    public var notes: String
+    public var dateAdded: Date
+    public var updatedAt: Date
+    public var isActive: Bool
     
     @Relationship(inverse: \CustomerStatus.customers)
-    var status: CustomerStatus?
+    public var status: CustomerStatus?
     
     @Relationship(deleteRule: .cascade)
-    var transactions: [Transaction]?
+    public var transactions: [Transaction]?
     
-    init(id: UUID = UUID(), storeId: String? = nil, firstName: String, lastName: String, email: String = "", phone: String = "", notes: String = "", status: CustomerStatus? = nil) {
+    public init(
+        id: UUID = UUID(),
+        storeId: String,
+        firstName: String,
+        lastName: String,
+        email: String = "",
+        phone: String = "",
+        notes: String = "",
+        status: CustomerStatus? = nil
+    ) {
         self.id = id
         self.storeId = storeId
         self.firstName = firstName
@@ -55,24 +64,26 @@ final class Customer {
         self.status = status
         self.dateAdded = Date()
         self.updatedAt = Date()
+        self.isActive = true
     }
 }
 
-extension Customer {
+public extension Customer {
+    /// A computed property returning the combined first and last name.
     var fullName: String {
         [firstName, lastName].filter { !$0.isEmpty }.joined(separator: " ")
     }
 }
 
-// MARK: - Employee
+/// A SwiftData model representing an employee record for local POS usage.
 @Model
-final class Employee {
-    var id: UUID = UUID()
-    var storeId: String?
-    var name: String = ""
-    var isActive: Bool = true
+public final class Employee {
+    @Attribute(.unique) public var id: UUID
+    public var storeId: String
+    public var name: String
+    public var isActive: Bool
     
-    init(id: UUID = UUID(), storeId: String? = nil, name: String, isActive: Bool = true) {
+    public init(id: UUID = UUID(), storeId: String, name: String, isActive: Bool = true) {
         self.id = id
         self.storeId = storeId
         self.name = name
@@ -80,33 +91,42 @@ final class Employee {
     }
 }
 
-// MARK: - Transaction (The Complete Order)
+/// A SwiftData model representing a finalized point-of-sale transaction.
 @Model
-final class Transaction {
-    var id: UUID = UUID()
-    var storeId: String?
-    var date: Date = Date()
-    var totalAmount: Double = 0.0
+public final class Transaction {
+    @Attribute(.unique) public var id: UUID
+    public var storeId: String
+    public var date: Date
+    public var totalAmount: Double
     
     @Relationship(deleteRule: .cascade)
-    var lineItems: [LineItem]?
+    public var lineItems: [LineItem]?
     
     @Relationship(deleteRule: .cascade)
-    var payments: [PaymentSplit]?
+    public var payments: [PaymentSplit]?
     
-    // The staff member processing the sale
-    var employeeName: String?
-    var employeeId: String?
+    /// The staff member processing the sale.
+    public var employeeName: String?
+    public var employeeId: String?
     
-    // The buyer (Customer)
+    /// The buyer (Customer).
     @Relationship(inverse: \Customer.transactions)
-    var customer: Customer?
+    public var customer: Customer?
     
-    // NEW: The buyer (Internal Staff)
-    var buyerEmployeeName: String?
-    var buyerEmployeeId: String?
+    /// The buyer (Internal Staff).
+    public var buyerEmployeeName: String?
+    public var buyerEmployeeId: String?
     
-    init(id: UUID = UUID(), storeId: String? = nil, totalAmount: Double, employeeName: String? = nil, employeeId: String? = nil, customer: Customer? = nil, buyerEmployeeName: String? = nil, buyerEmployeeId: String? = nil) {
+    public init(
+        id: UUID = UUID(),
+        storeId: String,
+        totalAmount: Double,
+        employeeName: String? = nil,
+        employeeId: String? = nil,
+        customer: Customer? = nil,
+        buyerEmployeeName: String? = nil,
+        buyerEmployeeId: String? = nil
+    ) {
         self.id = id
         self.storeId = storeId
         self.date = Date()
@@ -119,19 +139,19 @@ final class Transaction {
     }
 }
 
-// MARK: - Line Item
+/// A SwiftData model representing an individual item within a transaction.
 @Model
-final class LineItem {
-    var id: UUID = UUID()
-    var itemName: String = ""
-    var itemID: String = ""
-    var quantity: Int = 0
-    var pricePerUnit: Double = 0.0
+public final class LineItem {
+    @Attribute(.unique) public var id: UUID
+    public var itemName: String
+    public var itemID: String
+    public var quantity: Int
+    public var pricePerUnit: Double
     
     @Relationship(inverse: \Transaction.lineItems)
-    var transaction: Transaction?
+    public var transaction: Transaction?
     
-    init(id: UUID = UUID(), itemName: String, itemID: String, quantity: Int, pricePerUnit: Double) {
+    public init(id: UUID = UUID(), itemName: String, itemID: String, quantity: Int, pricePerUnit: Double) {
         self.id = id
         self.itemName = itemName
         self.itemID = itemID
@@ -140,19 +160,133 @@ final class LineItem {
     }
 }
 
-// MARK: - Payment Split
+/// A SwiftData model representing a segmented payment method for a transaction.
 @Model
-final class PaymentSplit {
-    var id: UUID = UUID()
-    var method: String = ""
-    var amount: Double = 0.0
+public final class PaymentSplit {
+    @Attribute(.unique) public var id: UUID
+    public var method: String
+    public var amount: Double
     
     @Relationship(inverse: \Transaction.payments)
-    var transaction: Transaction?
+    public var transaction: Transaction?
     
-    init(id: UUID = UUID(), method: String, amount: Double) {
+    public init(id: UUID = UUID(), method: String, amount: Double) {
         self.id = id
         self.method = method
         self.amount = amount
+    }
+}
+
+// MARK: - Data Transfer Objects (DTOs)
+
+public struct CustomerStatusDTO: Codable, Sendable, Identifiable {
+    public let id: String
+    public let name: String
+    public let storeId: String
+    
+    public init(from model: CustomerStatus) {
+        self.id = model.id.uuidString
+        self.name = model.name
+        self.storeId = model.storeId
+    }
+}
+
+public struct CustomerDTO: Codable, Sendable, Identifiable {
+    public let id: String
+    public let storeId: String
+    public let firstName: String
+    public let lastName: String
+    public let email: String
+    public let phone: String
+    public let notes: String
+    public let dateAdded: Date
+    public let updatedAt: Date
+    public let isActive: Bool
+    public let statusId: String?
+    
+    public init(from model: Customer) {
+        self.id = model.id.uuidString
+        self.storeId = model.storeId
+        self.firstName = model.firstName
+        self.lastName = model.lastName
+        self.email = model.email
+        self.phone = model.phone
+        self.notes = model.notes
+        self.dateAdded = model.dateAdded
+        self.updatedAt = model.updatedAt
+        self.isActive = model.isActive
+        self.statusId = model.status?.id.uuidString
+    }
+}
+
+public struct EmployeeDTO: Codable, Sendable, Identifiable {
+    public let id: String
+    public let storeId: String
+    public let name: String
+    public let isActive: Bool
+    
+    public init(from model: Employee) {
+        self.id = model.id.uuidString
+        self.storeId = model.storeId
+        self.name = model.name
+        self.isActive = model.isActive
+    }
+}
+
+public struct LineItemDTO: Codable, Sendable, Identifiable {
+    public let id: String
+    public let itemName: String
+    public let itemID: String
+    public let quantity: Int
+    public let pricePerUnit: Double
+    
+    public init(from model: LineItem) {
+        self.id = model.id.uuidString
+        self.itemName = model.itemName
+        self.itemID = model.itemID
+        self.quantity = model.quantity
+        self.pricePerUnit = model.pricePerUnit
+    }
+}
+
+public struct PaymentSplitDTO: Codable, Sendable, Identifiable {
+    public let id: String
+    public let method: String
+    public let amount: Double
+    
+    public init(from model: PaymentSplit) {
+        self.id = model.id.uuidString
+        self.method = model.method
+        self.amount = model.amount
+    }
+}
+
+public struct TransactionDTO: Codable, Sendable, Identifiable {
+    public let id: String
+    public let storeId: String
+    public let date: Date
+    public let totalAmount: Double
+    public let employeeName: String?
+    public let employeeId: String?
+    public let customerId: String?
+    public let buyerEmployeeName: String?
+    public let buyerEmployeeId: String?
+    
+    public let lineItems: [LineItemDTO]
+    public let payments: [PaymentSplitDTO]
+    
+    public init(from model: Transaction) {
+        self.id = model.id.uuidString
+        self.storeId = model.storeId
+        self.date = model.date
+        self.totalAmount = model.totalAmount
+        self.employeeName = model.employeeName
+        self.employeeId = model.employeeId
+        self.customerId = model.customer?.id.uuidString
+        self.buyerEmployeeName = model.buyerEmployeeName
+        self.buyerEmployeeId = model.buyerEmployeeId
+        
+        self.lineItems = model.lineItems?.map { LineItemDTO(from: $0) } ?? []
+        self.payments = model.payments?.map { PaymentSplitDTO(from: $0) } ?? []
     }
 }
