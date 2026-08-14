@@ -2,17 +2,15 @@
 //  ItemProfileView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-07-18.
-//
 
 import SwiftUI
 import SwiftData
 
+/// Displays granular details for a specific inventory item, including POS cart actions and dynamic recent sales history.
 struct ItemProfileView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Environment(CartManager.self) private var cartManager
-    
     @Environment(SessionManager.self) private var session
     
     let item: StoreItem
@@ -26,13 +24,16 @@ struct ItemProfileView: View {
     }
     
     // MARK: - Role-Based Access Control
+    
     private var isStaff: Bool {
-        let role = session.currentUser?.role
-        return role == .admin || role == .employee
+        guard let user = session.currentUser, let activeStore = user.activeStoreId else { return false }
+        let role = user.storeRoles[activeStore]
+        return user.isSystemAdmin || role == "admin" || role == "employee"
     }
     
     private var isAdmin: Bool {
-        return session.currentUser?.role == .admin
+        guard let user = session.currentUser, let activeStore = user.activeStoreId else { return false }
+        return user.isSystemAdmin || user.storeRoles[activeStore] == "admin"
     }
     
     var body: some View {
@@ -49,7 +50,6 @@ struct ItemProfileView: View {
                             .clipShape(Circle())
                             .shadow(radius: 5)
                     } else if let urlString = item.imageURL, let url = URL(string: urlString) {
-                        // AsyncImage fetches the photo from Firebase if local data is missing
                         AsyncImage(url: url) { phase in
                             if let image = phase.image {
                                 image
@@ -61,7 +61,7 @@ struct ItemProfileView: View {
                             } else if phase.error != nil {
                                 ZStack {
                                     Circle().fill(Color.gray.opacity(0.2)).frame(width: 150, height: 150)
-                                    Image(systemName: "photo.badge.exclamationmark").font(.system(size: 40)).foregroundColor(.gray)
+                                    Image(systemName: "photo.badge.exclamationmark").font(.system(size: 40)).foregroundStyle(.gray)
                                 }
                             } else {
                                 ZStack {
@@ -77,7 +77,7 @@ struct ItemProfileView: View {
                             .overlay(
                                 Image(systemName: "photo")
                                     .font(.system(size: 50))
-                                    .foregroundColor(.gray)
+                                    .foregroundStyle(.gray)
                             )
                             .shadow(radius: 5)
                     }
@@ -92,14 +92,14 @@ struct ItemProfileView: View {
                                 .monospacedDigit()
                         }
                         .font(.subheadline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                     } else {
                         HStack(spacing: 6) {
                             Image(systemName: "barcode.viewfinder")
                             Text("No Barcode Assigned")
                         }
                         .font(.subheadline)
-                        .foregroundColor(.gray.opacity(0.6))
+                        .foregroundStyle(.gray.opacity(0.6))
                     }
                     
                     Text(item.name)
@@ -110,12 +110,12 @@ struct ItemProfileView: View {
                     
                     Text(item.salesPrice, format: .currency(code: "CAD"))
                         .font(.title2)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                     
                     if isAdmin, item.itemCost > 0 {
                         Text("Cost: \(item.itemCost, format: .currency(code: "CAD"))")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                             .padding(.top, -4)
                     }
                     
@@ -126,23 +126,25 @@ struct ItemProfileView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
                             .background(Color.red.opacity(0.2))
-                            .foregroundColor(.red)
+                            .foregroundStyle(.red)
                             .clipShape(Capsule())
                     } else {
                         Text("\(item.stockCount) In Stock")
                             .font(.subheadline)
                             .fontWeight(.medium)
-                            .foregroundColor(.green)
+                            .foregroundStyle(.green)
                     }
                 }
                 
                 if isStaff {
                     if let quantityInCart = cartManager.items[item] {
                         HStack(spacing: 20) {
-                            Button(action: { cartManager.remove(item) }) {
+                            Button {
+                                cartManager.remove(item)
+                            } label: {
                                 Image(systemName: "minus.circle.fill")
                                     .font(.title)
-                                    .foregroundColor(.red)
+                                    .foregroundStyle(.red)
                             }
                             
                             VStack(spacing: 2) {
@@ -151,26 +153,28 @@ struct ItemProfileView: View {
                                     .fontWeight(.bold)
                                 Text("Total: \(Double(quantityInCart) * item.salesPrice, format: .currency(code: "CAD"))")
                                     .font(.caption)
-                                    .foregroundColor(.secondary)
+                                    .foregroundStyle(.secondary)
                             }
                             .frame(minWidth: 100)
                             
-                            Button(action: { cartManager.add(item) }) {
+                            Button {
+                                cartManager.add(item)
+                            } label: {
                                 Image(systemName: "plus.circle.fill")
                                     .font(.title)
-                                    .foregroundColor(quantityInCart >= item.stockCount ? .gray : .green)
+                                    .foregroundStyle(quantityInCart >= item.stockCount ? .gray : .green)
                             }
                             .disabled(quantityInCart >= item.stockCount)
                         }
                         .padding()
                         .frame(maxWidth: .infinity)
-                        .background(Color(UIColor.secondarySystemBackground))
+                        .background(Color(uiColor: .secondarySystemBackground))
                         .cornerRadius(12)
                         .padding(.horizontal, 40)
                     } else {
-                        Button(action: {
+                        Button {
                             cartManager.add(item)
-                        }) {
+                        } label: {
                             VStack {
                                 Image(systemName: "cart.badge.plus")
                                     .font(.title)
@@ -180,7 +184,7 @@ struct ItemProfileView: View {
                             .frame(maxWidth: .infinity)
                             .padding()
                             .background(Color.blue)
-                            .foregroundColor(.white)
+                            .foregroundStyle(.white)
                             .cornerRadius(12)
                         }
                         .disabled(item.stockCount <= 0)
@@ -194,7 +198,7 @@ struct ItemProfileView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("Notes")
                         .font(.headline)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                     
                     if let desc = item.desc, !desc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text(desc)
@@ -203,7 +207,7 @@ struct ItemProfileView: View {
                     } else {
                         Text("No notes provided.")
                             .font(.body)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                             .italic()
                     }
                 }
@@ -214,7 +218,7 @@ struct ItemProfileView: View {
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Tags")
                             .font(.headline)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                         
                         ScrollView(.horizontal, showsIndicators: false) {
                             HStack(spacing: 8) {
@@ -252,9 +256,9 @@ struct ItemProfileView: View {
                     }
                     
                     if isStaff && cartManager.totalItemCount > 0 {
-                        Button(action: {
+                        Button {
                             isShowingCheckoutSheet = true
-                        }) {
+                        } label: {
                             Image(systemName: "cart.fill")
                         }
                     }
@@ -273,6 +277,8 @@ struct ItemProfileView: View {
 }
 
 // MARK: - Smart Sales History Sub-View
+
+/// Evaluates local storage to display recent transaction history containing the active inventory item.
 struct ItemSalesHistorySection: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Transaction.date, order: .reverse) private var allTransactions: [Transaction]
@@ -290,13 +296,13 @@ struct ItemSalesHistorySection: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Recent Sales")
                 .font(.headline)
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
                 .padding(.horizontal)
             
             if itemTransactions.isEmpty {
                 Text("No sales history yet.")
                     .font(.body)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .italic()
                     .padding(.horizontal)
             } else {
@@ -304,31 +310,31 @@ struct ItemSalesHistorySection: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                         
                         HStack {
                             if let customer = transaction.customer {
                                 if customer.id == previousCustomerID {
-                                    Button(action: {
+                                    Button {
                                         dismiss()
-                                    }) {
+                                    } label: {
                                         Text(customer.fullName)
                                             .fontWeight(.semibold)
-                                            .foregroundColor(.blue)
+                                            .foregroundStyle(.blue)
                                     }
                                     .buttonStyle(.plain)
                                 } else {
                                     NavigationLink(destination: CustomerDetailView(customer: customer)) {
                                         Text(customer.fullName)
                                             .fontWeight(.semibold)
-                                            .foregroundColor(.blue)
+                                            .foregroundStyle(.blue)
                                     }
                                     .buttonStyle(.plain)
                                 }
                             } else {
                                 Text("Walk-in Customer")
                                     .fontWeight(.semibold)
-                                    .foregroundColor(.gray)
+                                    .foregroundStyle(.gray)
                             }
                             
                             Spacer()
@@ -345,7 +351,7 @@ struct ItemSalesHistorySection: View {
                         }
                     }
                     .padding()
-                    .background(Color(UIColor.secondarySystemBackground))
+                    .background(Color(uiColor: .secondarySystemBackground))
                     .cornerRadius(10)
                     .padding(.horizontal)
                 }

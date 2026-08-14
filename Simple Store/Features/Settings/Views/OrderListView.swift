@@ -6,62 +6,113 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - View Model
+
+@MainActor
+@Observable
+final class OrderListViewModel {
+    var searchText = ""
+    var isSearchFocused = false
+    
+    var transactionToRevert: Transaction?
+    var isShowingRevertAlert = false
+    
+    func revertTransaction(transaction: Transaction, allItems: [StoreItem], context: ModelContext, syncManager: SyncManager) async {
+        var restoredItems: [StoreItem] = []
+        
+        if let lineItems = transaction.lineItems {
+            for lineItem in lineItems {
+                if let storeItem = allItems.first(where: { $0.id.uuidString == lineItem.itemID }) {
+                    storeItem.stockCount += lineItem.quantity
+                    restoredItems.append(storeItem)
+                }
+            }
+        }
+        
+        let txId = transaction.id.uuidString
+        context.delete(transaction)
+        try? context.save()
+        
+        await syncManager.deleteTransactionFromCloud(txId)
+        for item in restoredItems {
+            await syncManager.pushItemToCloud(item)
+        }
+    }
+    
+    func shareReceipt(for transaction: Transaction) {
+        if let email = transaction.customer?.email, !email.trimmingCharacters(in: .whitespaces).isEmpty {
+            UIPasteboard.general.string = email
+        }
+        
+        // Corrected ReceiptRenderer argument label to 'for:'
+        guard let url = ReceiptRenderer.generatePDF(for: transaction) else { return }
+        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        
+        if let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+           let window = windowScene.windows.first(where: \.isKeyWindow),
+           let rootVC = window.rootViewController {
+            
+            activityVC.popoverPresentationController?.sourceView = window
+            activityVC.popoverPresentationController?.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.midY, width: 0, height: 0)
+            rootVC.present(activityVC, animated: true)
+        }
+    }
+}
+
+// MARK: - View
+
 struct OrderListView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SyncManager.self) private var syncManager
-    
-    // NEW: Inject Session to gate destructive actions
     @Environment(SessionManager.self) private var session
     
     @Query(sort: \Transaction.date, order: .reverse) private var allTransactions: [Transaction]
     @Query private var allItems: [StoreItem]
     
-    @State private var searchText = ""
-    @State private var isSearchFocused = false
-    
-    @State private var transactionToRevert: Transaction?
-    @State private var isShowingRevertAlert = false
-    
+    @State private var viewModel = OrderListViewModel()
     @AppStorage("hasDiscoveredSwipe") private var hasDiscoveredSwipe = false
     
+    /// Securely verifies administrative capabilities via the multi-tenant `AppUser` model.
     private var isAdmin: Bool {
-        session.currentUser?.role == .admin
+        guard let user = session.currentUser, let activeStore = user.activeStoreId else { return false }
+        return user.isSystemAdmin || user.storeRoles[activeStore] == "admin"
     }
     
     var filteredTransactions: [Transaction] {
-        if searchText.isEmpty {
+        if viewModel.searchText.isEmpty {
             return allTransactions
         } else {
             return allTransactions.filter { transaction in
-                let customerMatch = transaction.customer?.fullName.localizedCaseInsensitiveContains(searchText) ?? false
-                let employeeMatch = transaction.employeeName?.localizedCaseInsensitiveContains(searchText) ?? false
+                let customerMatch = transaction.customer?.fullName.localizedCaseInsensitiveContains(viewModel.searchText) ?? false
+                let employeeMatch = transaction.employeeName?.localizedCaseInsensitiveContains(viewModel.searchText) ?? false
                 return customerMatch || employeeMatch
             }
         }
     }
     
     var body: some View {
-        
         if !hasDiscoveredSwipe {
             HStack {
                 Image(systemName: "hand.draw.fill")
                 Text("Swipe items left or right for quick actions.")
                     .font(.footnote)
                 Spacer()
-                Button(action: { withAnimation { hasDiscoveredSwipe = true } }) {
-                    Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
+                Button {
+                    withAnimation { hasDiscoveredSwipe = true }
+                } label: {
+                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
                 }
             }
             .padding()
-            .background(Color.blue.opacity(0.1))
+            .background(Color.accentColor.opacity(0.1))
             .cornerRadius(8)
             .padding(.horizontal)
         }
             
         List {
             if filteredTransactions.isEmpty {
-                Text(searchText.isEmpty ? "No orders found." : "No results for '\(searchText)'")
-                    .foregroundColor(.secondary)
+                Text(viewModel.searchText.isEmpty ? "No orders found." : "No results for '\(viewModel.searchText)'")
+                    .foregroundStyle(.secondary)
                     .italic()
                     .listRowBackground(Color.clear)
             } else {
@@ -71,20 +122,19 @@ struct OrderListView: View {
                     }
                     .swipeActions(edge: .leading, allowsFullSwipe: true) {
                         Button {
-                            shareReceipt(for: transaction)
+                            viewModel.shareReceipt(for: transaction)
                         } label: {
                             Label("Receipt", systemImage: "square.and.arrow.up")
                         }
                         .tint(.blue)
                     }
-                    // NEW: Gated destructive swipe/context actions
                     .modifier(AdminTransactionActionModifier(
                         isAdmin: isAdmin,
                         transaction: transaction,
-                        onShare: { shareReceipt(for: transaction) },
+                        onShare: { viewModel.shareReceipt(for: transaction) },
                         onRevert: {
-                            transactionToRevert = transaction
-                            isShowingRevertAlert = true
+                            viewModel.transactionToRevert = transaction
+                            viewModel.isShowingRevertAlert = true
                         }
                     ))
                 }
@@ -92,15 +142,12 @@ struct OrderListView: View {
         }
         .navigationTitle("Order Directory")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search Customer or Employee...")
+        .searchable(text: $viewModel.searchText, isPresented: $viewModel.isSearchFocused, prompt: "Search Customer or Employee...")
         .sensoryFeedback(.success, trigger: allTransactions.count)
-        .alert("Revert Order", isPresented: $isShowingRevertAlert, presenting: transactionToRevert) { transaction in
+        .alert("Revert Order", isPresented: $viewModel.isShowingRevertAlert, presenting: viewModel.transactionToRevert) { transaction in
             Button("Cancel", role: .cancel) { }
-            
             Button("Revert Order", role: .destructive) {
-                withAnimation {
-                    revertTransaction(transaction)
-                }
+                Task { await viewModel.revertTransaction(transaction: transaction, allItems: allItems, context: modelContext, syncManager: syncManager) }
             }
         } message: { transaction in
             Text("Are you sure you want to revert this order? This will permanently delete the transaction and return the purchased items to your active stock.")
@@ -116,18 +163,18 @@ struct OrderListView: View {
                 Spacer()
                 Text(transaction.totalAmount, format: .currency(code: "CAD"))
                     .font(.headline)
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
             }
             
             HStack {
                 if let customer = transaction.customer {
                     Text(customer.fullName)
                         .font(.caption)
-                        .foregroundColor(.blue)
+                        .foregroundStyle(.blue)
                 } else {
                     Text("Walk-in")
                         .font(.caption)
-                        .foregroundColor(.gray)
+                        .foregroundStyle(.gray)
                 }
                 
                 Spacer()
@@ -135,61 +182,15 @@ struct OrderListView: View {
                 let itemCount = transaction.lineItems?.reduce(0) { $0 + $1.quantity } ?? 0
                 Text("\(itemCount) items")
                     .font(.caption)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
     }
-    
-    private func revertTransaction(_ transaction: Transaction) {
-        var restoredItems: [StoreItem] = []
-        
-        if let lineItems = transaction.lineItems {
-            for lineItem in lineItems {
-                if let storeItem = allItems.first(where: { $0.id.uuidString == lineItem.itemID }) {
-                    storeItem.stockCount += lineItem.quantity
-                    restoredItems.append(storeItem)
-                }
-            }
-        }
-        
-        let txId = transaction.id.uuidString
-        modelContext.delete(transaction)
-        try? modelContext.save()
-        
-        Task {
-            await syncManager.deleteTransactionFromCloud(txId)
-            for item in restoredItems {
-                await syncManager.pushItemToCloud(item)
-            }
-        }
-    }
-    
-    private func shareReceipt(for transaction: Transaction) {
-        if let email = transaction.customer?.email, !email.trimmingCharacters(in: .whitespaces).isEmpty {
-            UIPasteboard.general.string = email
-        }
-        
-        guard let url = ReceiptRenderer.generatePDF(from: transaction) else { return }
-        let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
-        
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
-           let rootVC = window.rootViewController {
-            
-            activityVC.popoverPresentationController?.sourceView = window
-            activityVC.popoverPresentationController?.sourceRect = CGRect(
-                x: window.bounds.midX,
-                y: window.bounds.midY,
-                width: 0,
-                height: 0
-            )
-            rootVC.present(activityVC, animated: true)
-        }
-    }
 }
 
-// NEW: Helper Modifier to securely conditionally render destructive actions for Admins
+// MARK: - Admin Helper Modifier
+
 struct AdminTransactionActionModifier: ViewModifier {
     let isAdmin: Bool
     let transaction: Transaction

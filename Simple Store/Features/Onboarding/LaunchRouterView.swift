@@ -5,7 +5,10 @@
 
 import SwiftUI
 
-/// The root router view responsible for directing the user to the appropriate screen based on authentication and active workspace state.
+/// The root routing component responsible for directing the user to the appropriate screen.
+///
+/// `LaunchRouterView` monitors the `SessionManager`'s authentication and multi-tenant workspace state
+/// to seamlessly transition between the authentication flow, tenant selection, and the active storefront.
 struct LaunchRouterView: View {
     
     // MARK: - Environment
@@ -15,7 +18,7 @@ struct LaunchRouterView: View {
     
     // MARK: - State
     
-    /// Controls the global visibility of the splash screen (only true on initial cold boot).
+    /// Controls the global visibility of the splash screen (only `true` on the initial cold boot).
     @State private var showSplash = true
     
     var body: some View {
@@ -23,17 +26,20 @@ struct LaunchRouterView: View {
             // MARK: - Main Application Content
             if let user = session.currentUser {
                 if user.activeStoreId == nil {
+                    // Route to tenant onboarding or tenant selection based on existing affiliations
                     if user.storeIds.isEmpty {
                         StoreSelectionView()
                     } else {
                         MyStoresView(isPresentedFromProfile: false)
                     }
                 } else {
+                    // Route directly into the active multi-tenant workspace
                     StorefrontView()
                         .id(user.activeStoreId)
                         .transition(.opacity)
                 }
             } else {
+                // Route to authentication if no valid session exists
                 AuthenticationView()
             }
             
@@ -44,7 +50,6 @@ struct LaunchRouterView: View {
                     .transition(.opacity)
             }
         }
-        // MARK: - State-Driven View Transitions
         // Triggers a smooth crossfade whenever the active workspace context changes.
         .animation(.easeInOut(duration: 0.4), value: session.currentUser?.activeStoreId)
         .accessibilityElement(children: .contain)

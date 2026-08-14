@@ -1,14 +1,13 @@
 //
 //  BackofficeItemDetailView.swift
-//  Simple Inventory
-//
-//  Created by Michael Steenkamp on 2026-07-20.
+//  Simple Store
 //
 
 import SwiftUI
 import SwiftData
 import UIKit
 
+/// An administrative interface displaying deep analytics, lifetime performance, and granular transaction history for a single item.
 struct BackofficeItemDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -21,7 +20,7 @@ struct BackofficeItemDetailView: View {
     @State private var isShowingRestockAlert = false
     @State private var restockAmount = ""
     
-    // Filter transactions that contain this specific item ID
+    /// Filters the global transaction array for any entries containing this specific item.
     var itemTransactions: [Transaction] {
         let itemIdString = item.id.uuidString
         return allTransactions.filter { transaction in
@@ -49,148 +48,10 @@ struct BackofficeItemDetailView: View {
     
     var body: some View {
         List {
-            Section {
-                HStack(spacing: 16) {
-                    if let data = item.imageData, let uiImage = UIImage(data: data) {
-                        Image(uiImage: uiImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 80, height: 80)
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .grayscale(item.isActive ? 0 : 0.99)
-                            .opacity(item.isActive ? 1.0 : 0.6)
-                    } else {
-                        RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.gray.opacity(0.2))
-                            .frame(width: 80, height: 80)
-                            .overlay(Image(systemName: "photo").foregroundColor(.gray))
-                    }
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.name)
-                            .font(.title3)
-                            .fontWeight(.bold)
-                            .foregroundColor(item.isActive ? .primary : .secondary)
-                        
-                        if let barcode = item.barcode, !barcode.isEmpty {
-                            Text(barcode)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .monospacedDigit()
-                        }
-                        
-                        if !item.isActive {
-                            Text("Archived")
-                                .font(.caption2)
-                                .fontWeight(.bold)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Color.red.opacity(0.15))
-                                .foregroundColor(.red)
-                                .clipShape(Capsule())
-                        }
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            
-            Section(header: Text("Current Status")) {
-                HStack {
-                    Text("Stock Level")
-                    Spacer()
-                    Text("\(item.stockCount)")
-                        .fontWeight(.bold)
-                        .foregroundColor(item.stockCount > 0 ? .primary : .red)
-                }
-                
-                HStack {
-                    Text("Retail Price")
-                    Spacer()
-                    Text(item.salesPrice, format: .currency(code: "CAD"))
-                        .foregroundColor(.secondary)
-                }
-                
-                HStack {
-                    Text("Wholesale Cost")
-                    Spacer()
-                    Text(item.itemCost, format: .currency(code: "CAD"))
-                        .foregroundColor(.secondary)
-                }
-                
-                if item.isActive {
-                    Button(action: {
-                        restockAmount = ""
-                        isShowingRestockAlert = true
-                    }) {
-                        Text("Receive Inventory (Restock)")
-                            .frame(maxWidth: .infinity)
-                            .foregroundColor(.blue)
-                            .fontWeight(.medium)
-                    }
-                }
-            }
-            
-            Section(header: Text("Lifetime Performance")) {
-                HStack {
-                    Text("Total Units Sold")
-                    Spacer()
-                    Text("\(lifetimeUnitsSold)")
-                        .fontWeight(.semibold)
-                }
-                
-                HStack {
-                    Text("Gross Revenue")
-                    Spacer()
-                    Text(lifetimeRevenue, format: .currency(code: "CAD"))
-                        .fontWeight(.semibold)
-                        .foregroundColor(.green)
-                }
-            }
-            
-            Section(header: Text("Transaction Log")) {
-                if itemTransactions.isEmpty {
-                    Text("No sales data available.")
-                        .italic()
-                        .foregroundColor(.secondary)
-                } else {
-                    ForEach(itemTransactions) { transaction in
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
-                                    .font(.caption)
-                                    .fontWeight(.medium)
-                                Spacer()
-                                Text(transaction.totalAmount, format: .currency(code: "CAD"))
-                                    .font(.subheadline)
-                                    .fontWeight(.bold)
-                            }
-                            
-                            HStack {
-                                let matchingLineItems = (transaction.lineItems ?? []).filter { $0.itemID == item.id.uuidString }
-                                let totalQty = matchingLineItems.reduce(0) { $0 + $1.quantity }
-                                let methods = Set((transaction.payments ?? []).map { $0.method }).joined(separator: ", ")
-                                
-                                Text("\(totalQty) unit(s) • \(methods)")
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text(transaction.customer?.fullName ?? "Walk-in")
-                                    .font(.caption2)
-                                    .foregroundColor(.blue)
-                            }
-                        }
-                        .padding(.vertical, 2)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                            Button {
-                                shareReceipt(for: transaction)
-                            } label: {
-                                Label("Receipt", systemImage: "square.and.arrow.up")
-                            }
-                            .tint(.blue)
-                        }
-                    }
-                }
-            }
+            headerSection
+            statusSection
+            performanceSection
+            transactionLogSection
         }
         .navigationTitle("Item Details")
         .navigationBarTitleDisplayMode(.inline)
@@ -222,13 +83,170 @@ struct BackofficeItemDetailView: View {
         }
     }
     
+    // MARK: - Sections
+    
+    private var headerSection: some View {
+        Section {
+            HStack(spacing: 16) {
+                if let data = item.imageData, let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 80, height: 80)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .grayscale(item.isActive ? 0 : 0.99)
+                        .opacity(item.isActive ? 1.0 : 0.6)
+                } else {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.gray.opacity(0.2))
+                        .frame(width: 80, height: 80)
+                        .overlay(Image(systemName: "photo").foregroundStyle(.gray))
+                }
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.name)
+                        .font(.title3)
+                        .fontWeight(.bold)
+                        .foregroundStyle(item.isActive ? .primary : .secondary)
+                    
+                    if let barcode = item.barcode, !barcode.isEmpty {
+                        Text(barcode)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    
+                    if !item.isActive {
+                        Text("Archived")
+                            .font(.caption2)
+                            .fontWeight(.bold)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.red.opacity(0.15))
+                            .foregroundStyle(.red)
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+    
+    private var statusSection: some View {
+        Section(header: Text("Current Status")) {
+            HStack {
+                Text("Stock Level")
+                Spacer()
+                Text("\(item.stockCount)")
+                    .fontWeight(.bold)
+                    .foregroundStyle(item.stockCount > 0 ? Color.primary : Color.red)
+            }
+            
+            HStack {
+                Text("Retail Price")
+                Spacer()
+                Text(item.salesPrice, format: .currency(code: "CAD"))
+                    .foregroundStyle(.secondary)
+            }
+            
+            HStack {
+                Text("Wholesale Cost")
+                Spacer()
+                Text(item.itemCost, format: .currency(code: "CAD"))
+                    .foregroundStyle(.secondary)
+            }
+            
+            if item.isActive {
+                Button {
+                    restockAmount = ""
+                    isShowingRestockAlert = true
+                } label: {
+                    Text("Receive Inventory (Restock)")
+                        .frame(maxWidth: .infinity)
+                        .foregroundStyle(.blue)
+                        .fontWeight(.medium)
+                }
+            }
+        }
+    }
+    
+    private var performanceSection: some View {
+        Section(header: Text("Lifetime Performance")) {
+            HStack {
+                Text("Total Units Sold")
+                Spacer()
+                Text("\(lifetimeUnitsSold)")
+                    .fontWeight(.semibold)
+            }
+            
+            HStack {
+                Text("Gross Revenue")
+                Spacer()
+                Text(lifetimeRevenue, format: .currency(code: "CAD"))
+                    .fontWeight(.semibold)
+                    .foregroundStyle(.green)
+            }
+        }
+    }
+    
+    private var transactionLogSection: some View {
+        Section(header: Text("Transaction Log")) {
+            if itemTransactions.isEmpty {
+                Text("No sales data available.")
+                    .italic()
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(itemTransactions) { transaction in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                            Spacer()
+                            Text(transaction.totalAmount, format: .currency(code: "CAD"))
+                                .font(.subheadline)
+                                .fontWeight(.bold)
+                        }
+                        
+                        HStack {
+                            let matchingLineItems = (transaction.lineItems ?? []).filter { $0.itemID == item.id.uuidString }
+                            let totalQty = matchingLineItems.reduce(0) { $0 + $1.quantity }
+                            let methods = Set((transaction.payments ?? []).map { $0.method }).joined(separator: ", ")
+                            
+                            Text("\(totalQty) unit(s) • \(methods)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Text(transaction.customer?.fullName ?? "Walk-in")
+                                .font(.caption2)
+                                .foregroundStyle(.blue)
+                        }
+                    }
+                    .padding(.vertical, 2)
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button {
+                            shareReceipt(for: transaction)
+                        } label: {
+                            Label("Receipt", systemImage: "square.and.arrow.up")
+                        }
+                        .tint(.blue)
+                    }
+                }
+            }
+        }
+    }
+    
+    // MARK: - Export
+    
+    @MainActor
     private func shareReceipt(for transaction: Transaction) {
-        guard let url = ReceiptRenderer.generatePDF(from: transaction) else { return }
+        // Fixed incorrect argument label to 'for:'
+        guard let url = ReceiptRenderer.generatePDF(for: transaction) else { return }
         
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
+        if let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+           let window = windowScene.windows.first(where: \.isKeyWindow),
            let rootVC = window.rootViewController {
             
             activityVC.popoverPresentationController?.sourceView = window

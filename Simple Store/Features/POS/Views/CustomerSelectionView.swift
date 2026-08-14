@@ -1,17 +1,16 @@
 //
 //  CustomerSelectionView.swift
-//  Simple Inventory
-//
-//  Created by Michael Steenkamp on 2026-07-20.
+//  Simple Store
 //
 
 import SwiftUI
 import SwiftData
 
+/// Provides a searchable interface to associate a specific CRM profile with an active POS transaction.
 struct CustomerSelectionView: View {
     @Environment(\.dismiss) private var dismiss
-    
     @Query(sort: \Customer.lastName) private var allCustomers: [Customer]
+    
     @Binding var selectedCustomer: Customer?
     
     @State private var searchText = ""
@@ -37,17 +36,17 @@ struct CustomerSelectionView: View {
         NavigationStack {
             List {
                 Section {
-                    Button(action: {
+                    Button {
                         selectedCustomer = nil
                         dismiss()
-                    }) {
+                    } label: {
                         HStack {
                             Text("Walk-in (No Profile)")
-                                .foregroundColor(.primary)
+                                .foregroundStyle(.primary)
                             Spacer()
                             if selectedCustomer == nil {
                                 Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
+                                    .foregroundStyle(.blue)
                             }
                         }
                     }
@@ -64,7 +63,7 @@ struct CustomerSelectionView: View {
                 Section(searchText.isEmpty ? "All Customers" : "Search Results") {
                     if filteredCustomers.isEmpty {
                         Text("No customers found.")
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                             .italic()
                     } else {
                         ForEach(filteredCustomers) { customer in
@@ -81,7 +80,9 @@ struct CustomerSelectionView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button(action: { isShowingAddCustomer = true }) {
+                    Button {
+                        isShowingAddCustomer = true
+                    } label: {
                         Image(systemName: "plus")
                     }
                 }
@@ -96,24 +97,24 @@ struct CustomerSelectionView: View {
     }
     
     private func customerRow(for customer: Customer) -> some View {
-        Button(action: {
+        Button {
             selectedCustomer = customer
             dismiss()
-        }) {
+        } label: {
             HStack {
                 VStack(alignment: .leading) {
                     Text(customer.fullName)
-                        .foregroundColor(.primary)
+                        .foregroundStyle(.primary)
                     if let status = customer.status {
                         Text(status.name)
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
                 if selectedCustomer?.id == customer.id {
                     Image(systemName: "checkmark")
-                        .foregroundColor(.blue)
+                        .foregroundStyle(.blue)
                 }
             }
         }

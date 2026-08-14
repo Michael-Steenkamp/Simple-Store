@@ -2,12 +2,11 @@
 //  CustomerListView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-07-19.
-//
 
 import SwiftUI
 import SwiftData
 
+/// The primary CRM directory, supporting multi-tenant search, filtering, and administrative archiving.
 struct CustomerListView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SessionManager.self) private var session
@@ -20,8 +19,10 @@ struct CustomerListView: View {
     @State private var isShowingAddSheet = false
     @State private var selectedFilterStatuses: Set<CustomerStatus> = []
     
+    /// Securely verifies administrative capabilities via the multi-tenant `AppUser` model.
     private var isAdmin: Bool {
-        session.currentUser?.role == .admin
+        guard let user = session.currentUser, let activeStore = user.activeStoreId else { return false }
+        return user.isSystemAdmin || user.storeRoles[activeStore] == "admin"
     }
     
     var activeCustomers: [Customer] {
@@ -62,16 +63,17 @@ struct CustomerListView: View {
             List {
                 if filteredCustomers.isEmpty {
                     Text(isFilterActive ? "No matching customers found." : "No active customers found.")
-                        .foregroundColor(.secondary).italic().listRowBackground(Color.clear)
+                        .foregroundStyle(.secondary)
+                        .italic()
+                        .listRowBackground(Color.clear)
                 } else {
                     ForEach(filteredCustomers) { customer in
                         NavigationLink(destination: CustomerDetailView(customer: customer)) {
                             CustomerCardRowView(customer: customer)
                         }
-                        // NEW: Strictly restrict swipe-to-archive to Admins
-                        .modifier(AdminCustomerActionModifier(isAdmin: isAdmin, customer: customer, onArchive: {
+                        .modifier(AdminCustomerActionModifier(isAdmin: isAdmin, customer: customer) {
                             archiveCustomer(customer)
-                        }))
+                        })
                     }
                 }
             }
@@ -105,8 +107,10 @@ struct CustomerListView: View {
     }
 }
 
-// NEW: Helper Modifier for Admin-only archiving permissions
-struct AdminCustomerActionModifier: ViewModifier {
+// MARK: - Helper Modifiers
+
+/// Restricts destructive swipe actions to strictly verified administrators.
+private struct AdminCustomerActionModifier: ViewModifier {
     let isAdmin: Bool
     let customer: Customer
     let onArchive: () -> Void
@@ -115,9 +119,12 @@ struct AdminCustomerActionModifier: ViewModifier {
         if isAdmin {
             content
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                    Button(role: .destructive) { withAnimation { onArchive() } } label: {
+                    Button(role: .destructive) {
+                        withAnimation { onArchive() }
+                    } label: {
                         Label("Archive", systemImage: "archivebox")
-                    }.tint(.red)
+                    }
+                    .tint(.red)
                 }
         } else {
             content
@@ -125,7 +132,8 @@ struct AdminCustomerActionModifier: ViewModifier {
     }
 }
 
-// MARK: - Customer Card Component with Status Tag
+// MARK: - Customer Card Component
+
 struct CustomerCardRowView: View {
     let customer: Customer
     
@@ -134,7 +142,7 @@ struct CustomerCardRowView: View {
             HStack {
                 Text(customer.fullName)
                     .font(.headline)
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                 
                 Spacer()
                 
@@ -148,14 +156,14 @@ struct CustomerCardRowView: View {
                     if !customer.email.isEmpty {
                         Label(customer.email, systemImage: "envelope")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                     
                     if !customer.phone.isEmpty {
                         Label(customer.phone, systemImage: "phone")
                             .font(.caption)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                             .lineLimit(1)
                     }
                 }
@@ -165,25 +173,27 @@ struct CustomerCardRowView: View {
     }
 }
 
-// MARK: - Customer Filter Bar Component
+// MARK: - Filter Component
+
 struct CustomerFilterBarView: View {
     @Environment(\.dismissSearch) private var dismissSearch
     @Binding var searchText: String
     @Binding var selectedFilterStatuses: Set<CustomerStatus>
-    var allStatuses: [CustomerStatus]
-    var isFilterActive: Bool
+    
+    let allStatuses: [CustomerStatus]
+    let isFilterActive: Bool
     
     var body: some View {
         if !allStatuses.isEmpty || isFilterActive {
             HStack(spacing: 0) {
                 if isFilterActive {
-                    Button(action: {
+                    Button {
                         withAnimation {
                             searchText = ""
                             dismissSearch()
                             selectedFilterStatuses.removeAll()
                         }
-                    }) {
+                    } label: {
                         HStack(spacing: 4) {
                             Image(systemName: "xmark.circle.fill")
                             Text("Clear")
@@ -193,7 +203,7 @@ struct CustomerFilterBarView: View {
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                         .background(Color.red.opacity(0.15))
-                        .foregroundColor(.red)
+                        .foregroundStyle(.red)
                         .clipShape(Capsule())
                     }
                     .padding(.leading, 16)
@@ -209,7 +219,7 @@ struct CustomerFilterBarView: View {
                     HStack(spacing: 12) {
                         ForEach(allStatuses) { status in
                             let isSelected = selectedFilterStatuses.contains(status)
-                            Button(action: {
+                            Button {
                                 withAnimation {
                                     if isSelected {
                                         selectedFilterStatuses.remove(status)
@@ -217,7 +227,7 @@ struct CustomerFilterBarView: View {
                                         selectedFilterStatuses.insert(status)
                                     }
                                 }
-                            }) {
+                            } label: {
                                 HStack(spacing: 6) {
                                     if isSelected {
                                         Image(systemName: "checkmark.circle.fill")
@@ -228,8 +238,8 @@ struct CustomerFilterBarView: View {
                                 }
                                 .padding(.horizontal, 16)
                                 .padding(.vertical, 8)
-                                .background(isSelected ? colorForStatus(status.name) : Color(UIColor.secondarySystemBackground))
-                                .foregroundColor(isSelected ? .white : .primary)
+                                .background(isSelected ? colorForStatus(status.name) : Color(uiColor: .secondarySystemBackground))
+                                .foregroundStyle(isSelected ? .white : .primary)
                                 .clipShape(Capsule())
                             }
                         }
@@ -239,7 +249,7 @@ struct CustomerFilterBarView: View {
                     .padding(.vertical, 10)
                 }
             }
-            .background(Color(UIColor.systemBackground))
+            .background(Color(uiColor: .systemBackground))
             .shadow(color: .black.opacity(0.05), radius: 3, x: 0, y: 3)
             .animation(.default, value: isFilterActive)
             .animation(.default, value: selectedFilterStatuses)

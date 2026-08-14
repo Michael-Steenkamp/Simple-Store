@@ -1,12 +1,11 @@
 //
 //  ReceiptTemplateView.swift
-//  Simple Inventory
-//
-//  Created by Michael Steenkamp on 2026-07-20.
+//  Simple Store
 //
 
 import SwiftUI
 
+/// A pure SwiftUI template utilized by `ReceiptRenderer` to generate deterministic PDF receipts off-screen.
 struct ReceiptTemplateView: View {
     let transaction: Transaction
     
@@ -60,7 +59,7 @@ struct ReceiptTemplateView: View {
                 
                 Text("Receipt of Sale")
                     .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(.gray)
+                    .foregroundStyle(.gray)
                     .padding(.top, 4)
                 
                 Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
@@ -158,7 +157,7 @@ struct ReceiptTemplateView: View {
                 if !receiptReturnPolicy.isEmpty {
                     Text(receiptReturnPolicy)
                         .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(.gray)
+                        .foregroundStyle(.gray)
                         .multilineTextAlignment(.center)
                 }
             }
@@ -168,6 +167,6 @@ struct ReceiptTemplateView: View {
         .padding(24)
         .frame(width: 300)
         .background(Color.white)
-        .foregroundColor(.black)
+        .foregroundStyle(.black)
     }
 }

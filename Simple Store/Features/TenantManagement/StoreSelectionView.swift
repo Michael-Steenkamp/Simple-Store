@@ -2,136 +2,45 @@
 //  StoreSelectionView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-08-10.
-//
 
 import SwiftUI
 import FirebaseFirestore
 
-struct PublicStore: Identifiable {
-    let id: String
-    let name: String
-    let address: String
-    let logoURL: String
+// MARK: - Models
+
+public struct PublicStore: Identifiable {
+    public let id: String
+    public let name: String
+    public let address: String
+    public let logoURL: String
 }
 
-struct StoreSelectionView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(SessionManager.self) private var session
+// MARK: - View Models
+
+@MainActor
+@Observable
+final class StoreSelectionViewModel {
+    var searchText = ""
+    var allStores: [PublicStore] = []
+    var isLoadingStores = true
     
-    @State private var searchText = ""
-    @State private var allStores: [PublicStore] = []
-    @State private var isLoadingStores = true
+    var isCreatingStore: Bool = false
+    var selectedStorePreview: PublicStore?
     
-    @State private var isCreatingStore: Bool = false
-    @State private var selectedStorePreview: PublicStore?
-    
-    var filteredStores: [PublicStore] {
+    func filteredStores(myStoreIds: [String]) -> [PublicStore] {
+        let discoverable = allStores.filter { !myStoreIds.contains($0.id) }
+        
         if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-            return allStores
+            return discoverable
         } else {
-            return allStores.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+            return discoverable.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
         }
     }
     
-    // Hide stores the user is already a member of
-    var discoverableStores: [PublicStore] {
-        let myStores = session.currentUser?.storeIds ?? []
-        return filteredStores.filter { !myStores.contains($0.id) }
-    }
-    
-    let columns = [GridItem(.flexible()), GridItem(.flexible())]
-    
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // MARK: - Search Header
-                VStack(spacing: 16) {
-                    Text("Discover Stores")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    
-                    TextField("Search by name...", text: $searchText)
-                        .padding(12)
-                        .background(Color(UIColor.secondarySystemBackground))
-                        .cornerRadius(12)
-                        .overlay(
-                            HStack {
-                                Spacer()
-                                Image(systemName: "magnifyingglass")
-                                    .foregroundColor(.gray)
-                                    .padding(.trailing, 12)
-                            }
-                        )
-                }
-                .padding()
-                
-                // MARK: - Store Grid
-                if isLoadingStores {
-                    Spacer()
-                    ProgressView("Finding stores...")
-                    Spacer()
-                } else if discoverableStores.isEmpty {
-                    Spacer()
-                    ContentUnavailableView(
-                        "No Stores Found",
-                        systemImage: "storefront",
-                        description: Text("Try adjusting your search terms, or create a new store.")
-                    )
-                    Spacer()
-                } else {
-                    ScrollView {
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(discoverableStores) { store in
-                                StoreCardView(store: store)
-                                    .onTapGesture {
-                                        selectedStorePreview = store
-                                    }
-                            }
-                        }
-                        .padding(.horizontal)
-                        .padding(.bottom, 20)
-                    }
-                }
-                
-                // MARK: - Create Store Footer
-                VStack {
-                    Divider()
-                    Button(action: {
-                        isCreatingStore = true
-                    }) {
-                        HStack {
-                            Image(systemName: "plus.circle.fill")
-                            Text("Create Your Own Store")
-                        }
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue)
-                        .foregroundColor(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                    .padding()
-                }
-                .background(Color(UIColor.systemBackground))
-            }
-            .navigationDestination(isPresented: $isCreatingStore) {
-                StoreSetupWizardView()
-            }
-            .sheet(item: $selectedStorePreview) { store in
-                StorePreviewView(store: store) {
-                    dismiss()
-                }
-            }
-            .task {
-                await fetchPublicStores()
-            }
-        }
-    }
-    
-    private func fetchPublicStores() async {
+    func fetchPublicStores() async {
         isLoadingStores = true
+        defer { isLoadingStores = false }
+        
         do {
             let db = Firestore.firestore()
             let snapshot = try await db.collection("stores").getDocuments()
@@ -146,7 +55,134 @@ struct StoreSelectionView: View {
         } catch {
             print("Failed to fetch stores: \(error.localizedDescription)")
         }
-        isLoadingStores = false
+    }
+}
+
+@MainActor
+@Observable
+final class StorePreviewViewModel {
+    var memberCount: Int = 0
+    var isJoining = false
+    
+    func fetchMemberCount(storeId: String) async {
+        let db = Firestore.firestore()
+        do {
+            let snapshot = try await db.collection("users")
+                .whereField("storeIds", arrayContains: storeId)
+                .getDocuments()
+            
+            memberCount = snapshot.documents.count
+        } catch {
+            print("Failed to fetch member count")
+        }
+    }
+    
+    func joinStore(storeId: String, session: SessionManager) async {
+        isJoining = true
+        await session.joinStore(storeId: storeId)
+        isJoining = false
+    }
+}
+
+// MARK: - Views
+
+/// A searchable global directory allowing users to discover and join public Simple Store workspaces.
+struct StoreSelectionView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(SessionManager.self) private var session
+    
+    @State private var viewModel = StoreSelectionViewModel()
+    
+    let columns = [GridItem(.flexible()), GridItem(.flexible())]
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                // MARK: - Search Header
+                VStack(spacing: 16) {
+                    Text("Discover Stores")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    
+                    TextField("Search by name...", text: $viewModel.searchText)
+                        .padding(12)
+                        .background(Color(uiColor: .secondarySystemBackground))
+                        .cornerRadius(12)
+                        .overlay(
+                            HStack {
+                                Spacer()
+                                Image(systemName: "magnifyingglass")
+                                    .foregroundStyle(.gray)
+                                    .padding(.trailing, 12)
+                            }
+                        )
+                }
+                .padding()
+                
+                // MARK: - Store Grid
+                let visibleStores = viewModel.filteredStores(myStoreIds: session.currentUser?.storeIds ?? [])
+                
+                if viewModel.isLoadingStores {
+                    Spacer()
+                    ProgressView("Finding stores...")
+                    Spacer()
+                } else if visibleStores.isEmpty {
+                    Spacer()
+                    ContentUnavailableView(
+                        "No Stores Found",
+                        systemImage: "storefront",
+                        description: Text("Try adjusting your search terms, or create a new store.")
+                    )
+                    Spacer()
+                } else {
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(visibleStores) { store in
+                                StoreCardView(store: store)
+                                    .onTapGesture {
+                                        viewModel.selectedStorePreview = store
+                                    }
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, 20)
+                    }
+                }
+                
+                // MARK: - Footer
+                VStack {
+                    Divider()
+                    Button {
+                        viewModel.isCreatingStore = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                            Text("Create Your Own Store")
+                        }
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                        .background(Color.accentColor)
+                        .foregroundStyle(.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                    }
+                    .padding()
+                }
+                .background(Color(uiColor: .systemBackground))
+            }
+            .navigationDestination(isPresented: $viewModel.isCreatingStore) {
+                StoreSetupWizardView()
+            }
+            .sheet(item: $viewModel.selectedStorePreview) { store in
+                StorePreviewView(store: store) {
+                    dismiss()
+                }
+            }
+            .task {
+                await viewModel.fetchPublicStores()
+            }
+        }
     }
 }
 
@@ -182,23 +218,23 @@ struct StoreCardView: View {
                             .lineLimit(1)
                     }
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                 }
             }
         }
         .padding()
         .frame(maxWidth: .infinity)
         .frame(height: 160)
-        .background(Color(UIColor.secondarySystemBackground))
+        .background(Color(uiColor: .secondarySystemBackground))
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.05), radius: 5, y: 2)
     }
     
     var placeholderLogo: some View {
         Circle()
-            .fill(Color(UIColor.tertiarySystemBackground))
+            .fill(Color(uiColor: .tertiarySystemBackground))
             .frame(width: 70, height: 70)
-            .overlay(Image(systemName: "storefront.fill").foregroundColor(.gray).font(.title2))
+            .overlay(Image(systemName: "storefront.fill").foregroundStyle(.gray).font(.title2))
     }
 }
 
@@ -209,8 +245,7 @@ struct StorePreviewView: View {
     let store: PublicStore
     var onJoinSuccess: () -> Void
     
-    @State private var memberCount: Int = 0
-    @State private var isJoining = false
+    @State private var viewModel = StorePreviewViewModel()
     
     var body: some View {
         NavigationStack {
@@ -238,40 +273,38 @@ struct StorePreviewView: View {
                     if !store.address.isEmpty {
                         Text(store.address)
                             .font(.title3)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                     
                     HStack {
                         Image(systemName: "person.2.fill")
-                        Text("\(memberCount) Members")
+                        Text("\(viewModel.memberCount) Members")
                     }
                     .font(.subheadline)
                     .padding(.horizontal, 12).padding(.vertical, 6)
-                    .background(Color.blue.opacity(0.1)).foregroundColor(.blue)
+                    .background(Color.accentColor.opacity(0.1)).foregroundStyle(Color.accentColor)
                     .clipShape(Capsule())
                     .padding(.top, 8)
                 }
                 
                 Spacer()
                 
-                Button(action: {
+                Button {
                     Task {
-                        isJoining = true
-                        await session.joinStore(storeId: store.id)
-                        isJoining = false
+                        await viewModel.joinStore(storeId: store.id, session: session)
                         dismiss()
                         onJoinSuccess()
                     }
-                }) {
+                } label: {
                     HStack {
-                        if isJoining {
+                        if viewModel.isJoining {
                             ProgressView().tint(.white)
                         } else {
                             Text("Join Workspace").fontWeight(.bold)
                         }
                     }
                     .frame(maxWidth: .infinity).padding()
-                    .background(Color.blue).foregroundColor(.white).cornerRadius(12)
+                    .background(Color.accentColor).foregroundStyle(.white).cornerRadius(12)
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 20)
@@ -280,28 +313,16 @@ struct StorePreviewView: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } }
             }
-            .task { await fetchMemberCount() }
+            .task {
+                await viewModel.fetchMemberCount(storeId: store.id)
+            }
         }
     }
     
     var placeholderLogo: some View {
         Circle()
-            .fill(Color(UIColor.secondarySystemBackground))
+            .fill(Color(uiColor: .secondarySystemBackground))
             .frame(width: 120, height: 120)
-            .overlay(Image(systemName: "storefront.fill").foregroundColor(.gray).font(.system(size: 50)))
-    }
-    
-    private func fetchMemberCount() async {
-        let db = Firestore.firestore()
-        do {
-            // Updated to use a standard document fetch and count to avoid AggregateQuery versioning issues
-            let snapshot = try await db.collection("users")
-                .whereField("storeIds", arrayContains: store.id)
-                .getDocuments()
-            
-            memberCount = snapshot.documents.count
-        } catch {
-            print("Failed to fetch member count")
-        }
+            .overlay(Image(systemName: "storefront.fill").foregroundStyle(.gray).font(.system(size: 50)))
     }
 }

@@ -2,12 +2,11 @@
 //  TransactionDetailView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-07-21.
-//
 
 import SwiftUI
 import SwiftData
 
+/// Displays a comprehensive overview of a completed transaction with cart reordering and receipt sharing capabilities.
 struct TransactionDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(CartManager.self) private var cartManager
@@ -48,7 +47,7 @@ struct TransactionDetailView: View {
                         
                         HStack {
                             Text("\(lineItem.quantity)x")
-                                .foregroundColor(.secondary)
+                                .foregroundStyle(.secondary)
                             Text(lineItem.itemName)
                             Spacer()
                             Text((Double(lineItem.quantity) * lineItem.pricePerUnit), format: .currency(code: "CAD"))
@@ -85,9 +84,9 @@ struct TransactionDetailView: View {
             CartCheckoutView()
         }
         .overlay(alignment: .bottom) {
-            Button(action: {
+            Button {
                 shareReceipt(for: transaction)
-            }) {
+            } label: {
                 HStack(spacing: 8) {
                     Image(systemName: "square.and.arrow.up")
                         .font(.title3)
@@ -97,7 +96,7 @@ struct TransactionDetailView: View {
                 .padding(.horizontal, 32)
                 .padding(.vertical, 16)
                 .background(Color.blue)
-                .foregroundColor(.white)
+                .foregroundStyle(.white)
                 .clipShape(Capsule())
                 .shadow(color: .black.opacity(0.25), radius: 8, y: 4)
             }
@@ -105,18 +104,18 @@ struct TransactionDetailView: View {
         }
     }
     
+    // MARK: - Actions
+    
     private func reorderEntireTransaction() {
         cartManager.clearCart()
                 
         if let items = transaction.lineItems {
             for lineItem in items {
-                // Verify the item is active and not scrubbed
                 if let liveItem = allItems.first(where: { $0.id.uuidString == lineItem.itemID }),
                    liveItem.isActive,
                    !liveItem.name.hasSuffix("(Deleted)"),
                    liveItem.stockCount >= lineItem.quantity {
                     
-                    // Add the historical quantity to the cart
                     for _ in 0..<lineItem.quantity {
                         cartManager.add(liveItem)
                     }
@@ -128,22 +127,19 @@ struct TransactionDetailView: View {
         isShowingCheckout = true
     }
     
-    // MARK: - Actions
-        
+    /// Presents a native system share sheet to distribute the transaction receipt.
+    @MainActor
     private func shareReceipt(for transaction: Transaction) {
-        // Copies the email to clipboard if it exists
         if let email = transaction.customer?.email, !email.trimmingCharacters(in: .whitespaces).isEmpty {
             UIPasteboard.general.string = email
         }
         
-        // Generates the PDF using your renderer
-        guard let url = ReceiptRenderer.generatePDF(from: transaction) else { return }
+        guard let url = ReceiptRenderer.generatePDF(for: transaction) else { return }
         
-        // Presents the native iOS share sheet
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         
-        if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-           let window = windowScene.windows.first,
+        if let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,
+           let window = windowScene.windows.first(where: \.isKeyWindow),
            let rootVC = window.rootViewController {
             
             activityVC.popoverPresentationController?.sourceView = window

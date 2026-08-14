@@ -2,177 +2,38 @@
 //  StoreSetupWizardView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-08-11.
-//
 
 import SwiftUI
 import PhotosUI
 
-struct StoreSetupWizardView: View {
-    @Environment(\.dismiss) private var dismiss
-    @Environment(SessionManager.self) private var session
+// MARK: - View Model
+
+/// Manages form state, input validation, and Firebase provisioning for new multi-tenant workspaces.
+@MainActor
+@Observable
+final class StoreSetupWizardViewModel {
+    var storeName: String = ""
+    var storeEmail: String = ""
+    var storePhone: String = ""
+    var storeAddress: String = ""
     
-    @State private var storeName: String = ""
-    @State private var storeEmail: String = ""
-    @State private var storePhone: String = ""
-    @State private var storeAddress: String = ""
+    var logoData: Data? = nil
     
-    @State private var logoData: Data? = nil
-    @State private var isShowingPhotoOptions = false
-    @State private var isShowingImagePicker = false
-    @State private var imageSource: UIImagePickerController.SourceType = .photoLibrary
-    
-    @State private var isProcessing = false
-    @State private var errorMessage = ""
-    
-    @FocusState private var isPhoneFocused: Bool
+    var isProcessing = false
+    var errorMessage = ""
     
     var isFormValid: Bool {
         !storeName.trimmingCharacters(in: .whitespaces).isEmpty
     }
     
-    var body: some View {
-        NavigationStack {
-            Form {
-                if !errorMessage.isEmpty {
-                    Section {
-                        Text(errorMessage)
-                            .font(.subheadline)
-                            .foregroundColor(.red)
-                    }
-                }
-                
-                Section {
-                    VStack(spacing: 16) {
-                        Text("Let's get your store set up.")
-                            .font(.title3)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                            .padding(.top, 8)
-                        
-                        Button(action: { isShowingPhotoOptions = true }) {
-                            VStack(spacing: 8) {
-                                if let data = logoData, let uiImage = UIImage(data: data) {
-                                    Image(uiImage: uiImage)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 100, height: 100)
-                                        .clipShape(Circle())
-                                        .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
-                                } else {
-                                    ZStack {
-                                        Circle()
-                                            .fill(Color(UIColor.secondarySystemBackground))
-                                            .frame(width: 100, height: 100)
-                                        Image(systemName: "camera.macro")
-                                            .font(.system(size: 30))
-                                            .foregroundColor(Color(UIColor.systemGray3))
-                                    }
-                                }
-                                
-                                Text(logoData == nil ? "Add Logo (Optional)" : "Change Logo")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Color(UIColor.secondarySystemFill))
-                                    .foregroundColor(.primary)
-                                    .clipShape(Capsule())
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.vertical, 10)
-                        
-                        TextField("Store Name (Required)", text: $storeName)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .multilineTextAlignment(.center)
-                            .padding(.bottom, 10)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                
-                Section(header: Text("Contact Information (Optional)")) {
-                    HStack {
-                        Image(systemName: "envelope")
-                            .foregroundColor(.gray)
-                            .frame(width: 24)
-                        TextField("Business Email", text: $storeEmail)
-                            .keyboardType(.emailAddress)
-                            .textContentType(.emailAddress)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                    }
-                    
-                    HStack {
-                        Image(systemName: "phone")
-                            .foregroundColor(.gray)
-                            .frame(width: 24)
-                        TextField("Phone Number", text: $storePhone)
-                            .keyboardType(.phonePad)
-                            .textContentType(.telephoneNumber)
-                            .focused($isPhoneFocused)
-                    }
-                    
-                    HStack(alignment: .top) {
-                        Image(systemName: "mappin.and.ellipse")
-                            .foregroundColor(.gray)
-                            .frame(width: 24)
-                            .padding(.top, 4)
-                        TextField("Physical Address", text: $storeAddress, axis: .vertical)
-                            .lineLimit(2...4)
-                            .textContentType(.fullStreetAddress)
-                    }
-                }
-                
-                Section {
-                    Button(action: {
-                        Task { await createStore() }
-                    }) {
-                        HStack {
-                            if isProcessing {
-                                ProgressView().controlSize(.small).tint(.white)
-                            } else {
-                                Text("Create Store")
-                                    .font(.headline)
-                                    .fontWeight(.bold)
-                            }
-                        }
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, 8)
-                        .foregroundColor(.white)
-                    }
-                    .listRowBackground(isFormValid && !isProcessing ? Color.blue : Color.gray.opacity(0.5))
-                    .disabled(!isFormValid || isProcessing)
-                }
-            }
-            .navigationTitle("New Store")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-            .onChange(of: isPhoneFocused) { _, isFocused in
-                if !isFocused {
-                    storePhone = storePhone.formattedAsPhoneNumber()
-                }
-            }
-            .confirmationDialog("Add Logo", isPresented: $isShowingPhotoOptions, titleVisibility: .visible) {
-                Button("Take Photo") { imageSource = .camera; isShowingImagePicker = true }
-                Button("Choose from Library") { imageSource = .photoLibrary; isShowingImagePicker = true }
-                if logoData != nil { Button("Remove Logo", role: .destructive) { logoData = nil } }
-                Button("Cancel", role: .cancel) { }
-            }
-            .fullScreenCover(isPresented: $isShowingImagePicker) {
-                ImagePicker(sourceType: imageSource, selectedImage: $logoData).ignoresSafeArea()
-            }
-        }
-    }
-    
-    private func createStore() async {
+    /// Executes the workspace creation sequence and binds the user as the primary administrator.
+    func createStore(session: SessionManager) async -> Bool {
         isProcessing = true
         errorMessage = ""
+        
+        defer {
+            isProcessing = false
+        }
         
         do {
             try await session.createStore(
@@ -185,11 +46,187 @@ struct StoreSetupWizardView: View {
             
             let generator = UINotificationFeedbackGenerator()
             generator.notificationOccurred(.success)
-            
-            dismiss()
+            return true
         } catch {
             errorMessage = error.localizedDescription
-            isProcessing = false
+            return false
+        }
+    }
+    
+    /// Sanitizes and structures the phone number input when the field loses focus.
+    func formatPhoneInput() {
+        storePhone = storePhone.formattedAsPhoneNumber
+    }
+}
+
+// MARK: - View
+
+/// Provides the onboarding interface for users to provision and configure a new retail workspace.
+struct StoreSetupWizardView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(SessionManager.self) private var session
+    
+    @State private var viewModel = StoreSetupWizardViewModel()
+    
+    @State private var isShowingPhotoOptions = false
+    @State private var isShowingImagePicker = false
+    @State private var imageSource: UIImagePickerController.SourceType = .photoLibrary
+    
+    @FocusState private var isPhoneFocused: Bool
+    
+    var body: some View {
+        NavigationStack {
+            Form {
+                if !viewModel.errorMessage.isEmpty {
+                    Section {
+                        Text(viewModel.errorMessage)
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
+                    }
+                }
+                
+                logoAndNameSection
+                contactInformationSection
+                actionSection
+            }
+            .navigationTitle("New Store")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .onChange(of: isPhoneFocused) { _, isFocused in
+                if !isFocused {
+                    viewModel.formatPhoneInput()
+                }
+            }
+            .confirmationDialog("Add Logo", isPresented: $isShowingPhotoOptions, titleVisibility: .visible) {
+                Button("Take Photo") { imageSource = .camera; isShowingImagePicker = true }
+                Button("Choose from Library") { imageSource = .photoLibrary; isShowingImagePicker = true }
+                if viewModel.logoData != nil { Button("Remove Logo", role: .destructive) { viewModel.logoData = nil } }
+                Button("Cancel", role: .cancel) { }
+            }
+            .fullScreenCover(isPresented: $isShowingImagePicker) {
+                ImagePicker(sourceType: imageSource, selectedImage: $viewModel.logoData).ignoresSafeArea()
+            }
+        }
+    }
+    
+    // MARK: - Subviews
+    
+    private var logoAndNameSection: some View {
+        Section {
+            VStack(spacing: 16) {
+                Text("Let's get your store set up.")
+                    .font(.title3)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
+                
+                Button {
+                    isShowingPhotoOptions = true
+                } label: {
+                    VStack(spacing: 8) {
+                        if let data = viewModel.logoData, let uiImage = UIImage(data: data) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 100, height: 100)
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
+                        } else {
+                            ZStack {
+                                Circle()
+                                    .fill(Color(uiColor: .secondarySystemBackground))
+                                    .frame(width: 100, height: 100)
+                                Image(systemName: "camera.macro")
+                                    .font(.system(size: 30))
+                                    .foregroundStyle(Color(uiColor: .systemGray3))
+                            }
+                        }
+                        
+                        Text(viewModel.logoData == nil ? "Add Logo (Optional)" : "Change Logo")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(uiColor: .secondarySystemFill))
+                            .foregroundStyle(.primary)
+                            .clipShape(Capsule())
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 10)
+                
+                TextField("Store Name (Required)", text: $viewModel.storeName)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 10)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+    
+    private var contactInformationSection: some View {
+        Section(header: Text("Contact Information (Optional)")) {
+            HStack {
+                Image(systemName: "envelope")
+                    .foregroundStyle(.gray)
+                    .frame(width: 24)
+                TextField("Business Email", text: $viewModel.storeEmail)
+                    .keyboardType(.emailAddress)
+                    .textContentType(.emailAddress)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+            }
+            
+            HStack {
+                Image(systemName: "phone")
+                    .foregroundStyle(.gray)
+                    .frame(width: 24)
+                TextField("Phone Number", text: $viewModel.storePhone)
+                    .keyboardType(.phonePad)
+                    .textContentType(.telephoneNumber)
+                    .focused($isPhoneFocused)
+            }
+            
+            HStack(alignment: .top) {
+                Image(systemName: "mappin.and.ellipse")
+                    .foregroundStyle(.gray)
+                    .frame(width: 24)
+                    .padding(.top, 4)
+                TextField("Physical Address", text: $viewModel.storeAddress, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textContentType(.fullStreetAddress)
+            }
+        }
+    }
+    
+    private var actionSection: some View {
+        Section {
+            Button {
+                Task {
+                    let success = await viewModel.createStore(session: session)
+                    if success { dismiss() }
+                }
+            } label: {
+                HStack {
+                    if viewModel.isProcessing {
+                        ProgressView().controlSize(.small).tint(.white)
+                    } else {
+                        Text("Create Store")
+                            .font(.headline)
+                            .fontWeight(.bold)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 8)
+                .foregroundStyle(.white)
+            }
+            .listRowBackground(viewModel.isFormValid && !viewModel.isProcessing ? Color.accentColor : Color.gray.opacity(0.5))
+            .disabled(!viewModel.isFormValid || viewModel.isProcessing)
         }
     }
 }

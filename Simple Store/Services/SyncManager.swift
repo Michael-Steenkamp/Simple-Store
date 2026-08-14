@@ -39,10 +39,6 @@ public final class SyncManager {
     
     // MARK: - Lifecycle Management
     
-    /// Initializes real-time Firestore listeners for a specific store workspace and binds them to the provided local context.
-    /// - Parameters:
-    ///   - storeId: The unique identifier of the target store workspace.
-    ///   - context: The `@MainActor` isolated SwiftData context used for local persistence.
     public func startListening(storeId: String, context: ModelContext) {
         if currentTrackedStoreId != storeId {
             clearLocalDatabase(context: context)
@@ -101,7 +97,6 @@ public final class SyncManager {
             }
     }
     
-    /// Terminates all active Firestore snapshot listeners and halts synchronization.
     public func stopAllListeners() {
         inventoryListener?.remove()
         customersListener?.remove()
@@ -129,7 +124,6 @@ public final class SyncManager {
         self.isSyncing = false
     }
     
-    /// Purges the local SwiftData cache to prevent data bleeding when switching active multi-tenant workspaces.
     private func clearLocalDatabase(context: ModelContext) {
         do {
             try context.delete(model: StoreItem.self)
@@ -153,7 +147,8 @@ public final class SyncManager {
     private func processIncomingInventory(data: [String: Any], context: ModelContext) {
         guard let name = data["name"] as? String,
               let idString = data["id"] as? String,
-              let id = UUID(uuidString: idString) else { return }
+              let id = UUID(uuidString: idString),
+              let storeId = data["storeId"] as? String else { return }
         
         let stockCount = data["stockCount"] as? Int ?? 0
         let salesPrice = data["salesPrice"] as? Double ?? 0.0
@@ -171,7 +166,7 @@ public final class SyncManager {
             } else {
                 let newItem = StoreItem(
                     id: id,
-                    storeId: data["storeId"] as? String,
+                    storeId: storeId,
                     name: name,
                     stockCount: stockCount,
                     salesPrice: salesPrice,
@@ -189,7 +184,8 @@ public final class SyncManager {
         guard let idString = data["id"] as? String,
               let id = UUID(uuidString: idString),
               let firstName = data["firstName"] as? String,
-              let lastName = data["lastName"] as? String else { return }
+              let lastName = data["lastName"] as? String,
+              let storeId = data["storeId"] as? String else { return }
         
         let descriptor = FetchDescriptor<Customer>(predicate: #Predicate { $0.id == id })
         
@@ -204,7 +200,7 @@ public final class SyncManager {
             } else {
                 let newCustomer = Customer(
                     id: id,
-                    storeId: data["storeId"] as? String,
+                    storeId: storeId,
                     firstName: firstName,
                     lastName: lastName,
                     email: data["email"] as? String ?? "",
@@ -222,7 +218,8 @@ public final class SyncManager {
     private func processIncomingEmployee(data: [String: Any], context: ModelContext) {
         guard let idString = data["id"] as? String,
               let id = UUID(uuidString: idString),
-              let name = data["name"] as? String else { return }
+              let name = data["name"] as? String,
+              let storeId = data["storeId"] as? String else { return }
         
         let descriptor = FetchDescriptor<Employee>(predicate: #Predicate { $0.id == id })
         
@@ -233,7 +230,7 @@ public final class SyncManager {
             } else {
                 let newEmployee = Employee(
                     id: id,
-                    storeId: data["storeId"] as? String,
+                    storeId: storeId,
                     name: name,
                     isActive: data["isActive"] as? Bool ?? true
                 )
@@ -246,7 +243,8 @@ public final class SyncManager {
     }
     
     private func processIncomingTransaction(data: [String: Any], context: ModelContext) {
-        guard let idString = data["id"] as? String, let id = UUID(uuidString: idString) else { return }
+        guard let idString = data["id"] as? String, let id = UUID(uuidString: idString),
+              let storeId = data["storeId"] as? String else { return }
         
         let descriptor = FetchDescriptor<Transaction>(predicate: #Predicate { $0.id == id })
         do {
@@ -257,7 +255,7 @@ public final class SyncManager {
             
             let newTx = Transaction(
                 id: id,
-                storeId: data["storeId"] as? String,
+                storeId: storeId,
                 totalAmount: totalAmount,
                 employeeName: data["employeeName"] as? String,
                 employeeId: data["employeeId"] as? String,
@@ -311,14 +309,15 @@ public final class SyncManager {
     
     private func processIncomingTag(data: [String: Any], context: ModelContext) {
         guard let idString = data["id"] as? String, let id = UUID(uuidString: idString),
-              let name = data["name"] as? String else { return }
+              let name = data["name"] as? String,
+              let storeId = data["storeId"] as? String else { return }
         
         let descriptor = FetchDescriptor<ItemTag>(predicate: #Predicate { $0.id == id })
         do {
             if let existing = try context.fetch(descriptor).first {
                 existing.name = name
             } else {
-                let newTag = ItemTag(id: id, storeId: data["storeId"] as? String, name: name)
+                let newTag = ItemTag(id: id, storeId: storeId, name: name)
                 context.insert(newTag)
             }
             if context.hasChanges { try context.save() }
@@ -329,14 +328,15 @@ public final class SyncManager {
     
     private func processIncomingCustomerStatus(data: [String: Any], context: ModelContext) {
         guard let idString = data["id"] as? String, let id = UUID(uuidString: idString),
-              let name = data["name"] as? String else { return }
+              let name = data["name"] as? String,
+              let storeId = data["storeId"] as? String else { return }
         
         let descriptor = FetchDescriptor<CustomerStatus>(predicate: #Predicate { $0.id == id })
         do {
             if let existing = try context.fetch(descriptor).first {
                 existing.name = name
             } else {
-                let newStatus = CustomerStatus(id: id, name: name, storeId: data["storeId"] as? String)
+                let newStatus = CustomerStatus(id: id, name: name, storeId: storeId)
                 context.insert(newStatus)
             }
             if context.hasChanges { try context.save() }
@@ -348,10 +348,9 @@ public final class SyncManager {
     // MARK: - Outgoing Data Pushers (Local -> Cloud)
     
     public func pushItemToCloud(_ item: StoreItem) async {
-        guard let storeId = item.storeId else { return }
         let data: [String: Any] = [
             "id": item.id.uuidString,
-            "storeId": storeId,
+            "storeId": item.storeId,
             "name": item.name,
             "desc": item.desc ?? "",
             "stockCount": item.stockCount,
@@ -364,8 +363,6 @@ public final class SyncManager {
     }
     
     public func pushTransactionToCloud(_ transaction: Transaction) async {
-        guard let storeId = transaction.storeId else { return }
-        
         let lineItemsData = (transaction.lineItems ?? []).map { li in
             ["id": li.id.uuidString, "itemName": li.itemName, "itemID": li.itemID, "quantity": li.quantity, "pricePerUnit": li.pricePerUnit]
         }
@@ -376,7 +373,7 @@ public final class SyncManager {
         
         let data: [String: Any] = [
             "id": transaction.id.uuidString,
-            "storeId": storeId,
+            "storeId": transaction.storeId,
             "date": transaction.date,
             "totalAmount": transaction.totalAmount,
             "employeeName": transaction.employeeName ?? "",
@@ -391,10 +388,9 @@ public final class SyncManager {
     }
     
     public func pushCustomerToCloud(_ customer: Customer) async {
-        guard let storeId = customer.storeId else { return }
         let data: [String: Any] = [
             "id": customer.id.uuidString,
-            "storeId": storeId,
+            "storeId": customer.storeId,
             "firstName": customer.firstName,
             "lastName": customer.lastName,
             "email": customer.email,
@@ -407,10 +403,9 @@ public final class SyncManager {
     }
     
     public func pushEmployeeToCloud(_ employee: Employee) async {
-        guard let storeId = employee.storeId else { return }
         let data: [String: Any] = [
             "id": employee.id.uuidString,
-            "storeId": storeId,
+            "storeId": employee.storeId,
             "name": employee.name,
             "isActive": employee.isActive
         ]
@@ -430,10 +425,9 @@ public final class SyncManager {
     // MARK: - Tag & Status Management
     
     public func pushItemTagToCloud(_ tag: ItemTag) async {
-        guard let storeId = tag.storeId else { return }
         let data: [String: Any] = [
             "id": tag.id.uuidString,
-            "storeId": storeId,
+            "storeId": tag.storeId,
             "name": tag.name
         ]
         try? await db.collection("tags").document(tag.id.uuidString).setData(data, merge: true)
@@ -444,10 +438,9 @@ public final class SyncManager {
     }
     
     public func pushCustomerStatusToCloud(_ status: CustomerStatus) async {
-        guard let storeId = status.storeId else { return }
         let data: [String: Any] = [
             "id": status.id.uuidString,
-            "storeId": storeId,
+            "storeId": status.storeId,
             "name": status.name
         ]
         try? await db.collection("customerStatuses").document(status.id.uuidString).setData(data, merge: true)

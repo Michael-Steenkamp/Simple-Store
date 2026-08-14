@@ -2,11 +2,52 @@
 //  EmployeeManagementView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-07-20.
-//
 
 import SwiftUI
 import SwiftData
+
+// MARK: - View Model
+
+@MainActor
+@Observable
+final class EmployeeManagementViewModel {
+    var searchText = ""
+    var isSearchFocused = false
+    var isShowingAddSheet = false
+    var adminNames: [String] = []
+    
+    var newEmployeeName = ""
+    
+    func promoteToAdmin(employee: Employee, session: SessionManager) async {
+        do {
+            try await session.promoteEmployeeToAdmin(employeeName: employee.name)
+            withAnimation { adminNames.append(employee.name) }
+        } catch {
+            print(error.localizedDescription)
+        }
+    }
+    
+    func archiveEmployee(employee: Employee, context: ModelContext, syncManager: SyncManager) async {
+        employee.isActive = false
+        try? context.save()
+        await syncManager.pushEmployeeToCloud(employee)
+    }
+    
+    func saveNewEmployee(session: SessionManager, context: ModelContext, syncManager: SyncManager) async {
+        // Safely resolves the optional storeId to satisfy the strictly typed model init
+        let storeId = session.currentUser?.activeStoreId ?? ""
+        let newEmployee = Employee(
+            id: UUID(),
+            storeId: storeId,
+            name: newEmployeeName
+        )
+        context.insert(newEmployee)
+        try? context.save()
+        await syncManager.pushEmployeeToCloud(newEmployee)
+    }
+}
+
+// MARK: - View
 
 struct EmployeeManagementView: View {
     @Environment(\.modelContext) private var modelContext
@@ -14,15 +55,11 @@ struct EmployeeManagementView: View {
     @Environment(SessionManager.self) private var session
     
     @Query(sort: \Employee.name) private var allEmployees: [Employee]
-    
-    @State private var searchText = ""
-    @State private var isSearchFocused = false
-    @State private var isShowingAddSheet = false
-    
-    @State private var adminNames: [String] = []
+    @State private var viewModel = EmployeeManagementViewModel()
     
     private var isAdmin: Bool {
-        session.currentUser?.role == .admin
+        guard let user = session.currentUser, let activeStore = user.activeStoreId else { return false }
+        return user.isSystemAdmin || user.storeRoles[activeStore] == "admin"
     }
     
     var activeEmployees: [Employee] {
@@ -30,19 +67,19 @@ struct EmployeeManagementView: View {
     }
     
     var filteredEmployees: [Employee] {
-        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+        if viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
             return activeEmployees
         } else {
-            return activeEmployees.filter { $0.name.localizedCaseInsensitiveContains(searchText) }
+            return activeEmployees.filter { $0.name.localizedCaseInsensitiveContains(viewModel.searchText) }
         }
     }
     
     var pinnedAdmins: [Employee] {
-        filteredEmployees.filter { adminNames.contains($0.name) }
+        filteredEmployees.filter { viewModel.adminNames.contains($0.name) }
     }
     
     var regularStaff: [Employee] {
-        filteredEmployees.filter { !adminNames.contains($0.name) }
+        filteredEmployees.filter { !viewModel.adminNames.contains($0.name) }
     }
     
     var body: some View {
@@ -58,7 +95,13 @@ struct EmployeeManagementView: View {
                                     EmployeeRowView(employee: admin, isPinnedAdmin: true)
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) { archiveEmployee(admin) } label: { Label("Archive", systemImage: "archivebox") }
+                                    if isAdmin {
+                                        Button(role: .destructive) {
+                                            Task { await viewModel.archiveEmployee(employee: admin, context: modelContext, syncManager: syncManager) }
+                                        } label: {
+                                            Label("Archive", systemImage: "archivebox")
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -72,18 +115,28 @@ struct EmployeeManagementView: View {
                                 }
                                 .swipeActions(edge: .leading) {
                                     if isAdmin {
-                                        Button { promoteToAdmin(staff) } label: { Label("Make Admin", systemImage: "star.fill") }
+                                        Button {
+                                            Task { await viewModel.promoteToAdmin(employee: staff, session: session) }
+                                        } label: {
+                                            Label("Make Admin", systemImage: "star.fill")
+                                        }
                                         .tint(.yellow)
                                     }
                                 }
                                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    Button(role: .destructive) { archiveEmployee(staff) } label: { Label("Archive", systemImage: "archivebox") }
+                                    if isAdmin {
+                                        Button(role: .destructive) {
+                                            Task { await viewModel.archiveEmployee(employee: staff, context: modelContext, syncManager: syncManager) }
+                                        } label: {
+                                            Label("Archive", systemImage: "archivebox")
+                                        }
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search employees by name...")
+                .searchable(text: $viewModel.searchText, isPresented: $viewModel.isSearchFocused, prompt: "Search employees by name...")
             }
         }
         .navigationTitle("Employee Directory")
@@ -92,33 +145,17 @@ struct EmployeeManagementView: View {
                 HStack(spacing: 16) {
                     if isAdmin {
                         NavigationLink(destination: ArchivedEmployeesView()) { Image(systemName: "archivebox") }
-                        Button(action: { isShowingAddSheet = true }) { Image(systemName: "plus") }
+                        Button { viewModel.isShowingAddSheet = true } label: { Image(systemName: "plus") }
                     }
                 }
             }
         }
-        .sheet(isPresented: $isShowingAddSheet) { AddEmployeeView() }
+        .sheet(isPresented: $viewModel.isShowingAddSheet) {
+            AddEmployeeView(viewModel: viewModel)
+        }
         .task {
-            adminNames = await session.fetchStoreAdminNames()
+            viewModel.adminNames = await session.fetchStoreAdminNames()
         }
-    }
-    
-    private func promoteToAdmin(_ employee: Employee) {
-        Task {
-            do {
-                try await session.promoteEmployeeToAdmin(employeeName: employee.name)
-                withAnimation { adminNames.append(employee.name) }
-            } catch {
-                print(error.localizedDescription)
-            }
-        }
-    }
-    
-    private func archiveEmployee(_ employee: Employee) {
-        guard isAdmin else { return }
-        employee.isActive = false
-        try? modelContext.save()
-        Task { await syncManager.pushEmployeeToCloud(employee) }
     }
 }
 
@@ -132,7 +169,7 @@ struct EmployeeRowView: View {
             Spacer()
             if isPinnedAdmin {
                 Image(systemName: "star.fill")
-                    .foregroundColor(.yellow)
+                    .foregroundStyle(.yellow)
                     .font(.caption)
             }
         }
@@ -141,19 +178,20 @@ struct EmployeeRowView: View {
 }
 
 // MARK: - Add Employee Sheet
+
 struct AddEmployeeView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
     
-    @State private var name: String = ""
+    @Bindable var viewModel: EmployeeManagementViewModel
+    
     var body: some View {
         NavigationStack {
             Form {
                 Section(header: Text("Employee Details"), footer: Text("Employees can be selected during the checkout process to track who made the sale.")) {
-                    TextField("Full Name", text: $name).textContentType(.name)
+                    TextField("Full Name", text: $viewModel.newEmployeeName).textContentType(.name)
                 }
             }
             .navigationTitle("New Employee")
@@ -162,17 +200,13 @@ struct AddEmployeeView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        let newEmployee = Employee(
-                            storeId: session.currentUser?.storeId,
-                            name: name
-                        )
-                        modelContext.insert(newEmployee)
-                        try? modelContext.save()
-                        
-                        Task { await syncManager.pushEmployeeToCloud(newEmployee) }
-                        dismiss()
+                        Task {
+                            await viewModel.saveNewEmployee(session: session, context: modelContext, syncManager: syncManager)
+                            viewModel.newEmployeeName = ""
+                            dismiss()
+                        }
                     }
-                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(viewModel.newEmployeeName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
@@ -180,6 +214,7 @@ struct AddEmployeeView: View {
 }
 
 // MARK: - Archived Employees View
+
 struct ArchivedEmployeesView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SyncManager.self) private var syncManager
@@ -194,7 +229,7 @@ struct ArchivedEmployeesView: View {
         List {
             if archivedEmployees.isEmpty {
                 Text("No archived employees.")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .italic()
                     .listRowBackground(Color.clear)
             } else {
@@ -202,7 +237,7 @@ struct ArchivedEmployeesView: View {
                     HStack {
                         Text(employee.name)
                             .font(.headline)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                         
                         Spacer()
                     }
@@ -220,19 +255,6 @@ struct ArchivedEmployeesView: View {
                             withAnimation { permanentlyDelete(employee) }
                         } label: {
                             Label("Delete", systemImage: "trash")
-                        }
-                    }
-                    .contextMenu {
-                        Button {
-                            withAnimation { restoreEmployee(employee) }
-                        } label: {
-                            Label("Restore Employee", systemImage: "arrow.uturn.backward")
-                        }
-                        
-                        Button(role: .destructive) {
-                            withAnimation { permanentlyDelete(employee) }
-                        } label: {
-                            Label("Delete Forever", systemImage: "trash")
                         }
                     }
                 }

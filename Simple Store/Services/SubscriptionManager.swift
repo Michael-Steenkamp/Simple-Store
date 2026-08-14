@@ -6,6 +6,16 @@
 import StoreKit
 import SwiftUI
 
+// MARK: - Utilities
+
+/// A thread-safe wrapper that automatically cancels a Task when deallocated.
+/// This natively bypasses Swift 6 actor-isolation restrictions inside `deinit`.
+fileprivate final class TaskCanceller: Sendable {
+    let task: Task<Void, Never>
+    init(task: Task<Void, Never>) { self.task = task }
+    deinit { task.cancel() }
+}
+
 /// Manages App Store subscriptions, StoreKit 2 transactions, and premium feature entitlements.
 /// Acts as the central `@MainActor` source of truth for paywalled or administrative access.
 @Observable
@@ -14,14 +24,9 @@ public final class SubscriptionManager {
     
     // MARK: - Entitlement State
     
-    /// Indicates if the user has a valid, paid Apple App Store subscription.
     private(set) var hasActiveAppStoreSubscription: Bool = false
-    
-    /// Indicates if the current user is a system administrator (injected via `SessionManager`).
     var isSystemAdmin: Bool = false
     
-    /// The derived single source of truth for premium feature access.
-    /// Returns `true` if the user is subscribed or possesses system administrator privileges.
     var hasPremiumAccess: Bool {
         return hasActiveAppStoreSubscription || isSystemAdmin
     }
@@ -29,33 +34,32 @@ public final class SubscriptionManager {
     // MARK: - StoreKit State
     
     private let subscriptionProductID = "com.simplestore.premium.monthly"
-    
-    /// The list of available subscription products fetched from App Store Connect.
     private(set) var subscriptions: [Product] = []
-    
-    /// Indicates if the manager is currently fetching products from the network.
     private(set) var isLoadingProducts: Bool = false
     
-    private var updateListenerTask: Task<Void, Never>?
+    private var transactionObserver: TaskCanceller?
     
     // MARK: - Initialization
     
     public init() {
-        updateListenerTask = listenForTransactions()
         Task {
             await fetchProducts()
             await updateSubscriptionStatus()
         }
-    }
-    
-    deinit {
-        // Prevents memory leaks by ensuring the detached async sequence is terminated.
-        updateListenerTask?.cancel()
+        
+        let task = Task.detached { [weak self] in
+            for await result in StoreKit.Transaction.updates {
+                guard case .verified(let transaction) = result else { continue }
+                await transaction.finish()
+                await self?.updateSubscriptionStatus()
+            }
+        }
+        
+        transactionObserver = TaskCanceller(task: task)
     }
     
     // MARK: - StoreKit Operations
     
-    /// Fetches the subscription products from App Store Connect.
     public func fetchProducts() async {
         isLoadingProducts = true
         defer { isLoadingProducts = false }
@@ -63,14 +67,11 @@ public final class SubscriptionManager {
         do {
             subscriptions = try await Product.products(for: [subscriptionProductID])
         } catch {
-            // In a production environment, route this to a non-fatal crash reporting tool (e.g., Crashlytics)
             print("Failed to fetch StoreKit products: \(error.localizedDescription)")
         }
     }
     
-    /// Validates the current entitlement status natively using StoreKit 2.
     public func updateSubscriptionStatus() async {
-        // Explicitly scoped to StoreKit.Transaction to prevent collision with SwiftData 'Transaction' models.
         for await entitlement in StoreKit.Transaction.currentEntitlements {
             guard case .verified(let transaction) = entitlement else { continue }
             
@@ -82,11 +83,6 @@ public final class SubscriptionManager {
         hasActiveAppStoreSubscription = false
     }
     
-    /// Initiates the App Store purchase flow for a specified product.
-    ///
-    /// - Parameter product: The StoreKit `Product` the user intends to purchase.
-    /// - Returns: A boolean indicating whether the purchase was successfully verified and completed.
-    /// - Throws: An error if the StoreKit purchase operation fails.
     public func purchase(_ product: Product) async throws -> Bool {
         let result = try await product.purchase()
         
@@ -102,21 +98,6 @@ public final class SubscriptionManager {
             return false
         @unknown default:
             return false
-        }
-    }
-    
-    // MARK: - Background Listeners
-    
-    /// Spawns a detached task to monitor external StoreKit transactions (e.g., renewals, outside cancellations).
-    /// - Returns: A cancellable `Task` managing the async sequence.
-    private func listenForTransactions() -> Task<Void, Never> {
-        Task.detached {
-            // Explicitly scoped to StoreKit.Transaction to prevent collision with SwiftData 'Transaction' models.
-            for await result in StoreKit.Transaction.updates {
-                guard case .verified(let transaction) = result else { continue }
-                await transaction.finish()
-                await self.updateSubscriptionStatus()
-            }
         }
     }
 }

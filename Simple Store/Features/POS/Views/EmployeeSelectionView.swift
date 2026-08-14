@@ -1,13 +1,12 @@
 //
 //  EmployeeSelectionView.swift
-//  Simple Inventory
-//
-//  Created by Michael Steenkamp on 2026-07-20.
+//  Simple Store
 //
 
 import SwiftUI
 import SwiftData
 
+/// Provides a searchable interface to associate a staff member as the transaction server or internal buyer.
 struct EmployeeSelectionView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Employee.name) private var allEmployees: [Employee]
@@ -30,29 +29,29 @@ struct EmployeeSelectionView: View {
     var body: some View {
         NavigationStack {
             List {
-                Button(action: {
+                Button {
                     selectedEmployee = nil
                     dismiss()
-                }) {
+                } label: {
                     Text("None / Self-Checkout")
-                        .foregroundColor(.red)
+                        .foregroundStyle(.red)
                         .italic()
                 }
                 
                 ForEach(filteredEmployees) { employee in
-                    Button(action: {
+                    Button {
                         selectedEmployee = employee
                         dismiss()
-                    }) {
+                    } label: {
                         HStack {
                             Text(employee.name)
-                                .foregroundColor(.primary)
+                                .foregroundStyle(.primary)
                             
                             Spacer()
                             
                             if selectedEmployee == employee {
                                 Image(systemName: "checkmark")
-                                    .foregroundColor(.blue)
+                                    .foregroundStyle(.blue)
                                     .fontWeight(.bold)
                             }
                         }

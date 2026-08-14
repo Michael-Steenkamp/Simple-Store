@@ -1,23 +1,22 @@
 //
-//  StoreFrontView.swift
+//  StorefrontView.swift
 //  Simple Store
-//
-//  Created by Michael Steenkamp on 2026-07-18.
 //
 
 import SwiftUI
 import SwiftData
 import FirebaseFirestore
 
+/// The primary POS and inventory interface, providing filtering, dynamic role-based access, and seamless hardware scanner integration.
 struct StorefrontView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
-    
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
     
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
     @Query(sort: \ItemTag.name) private var allTags: [ItemTag]
+    
     @AppStorage("storeName") private var storeName: String = "Your Store Name"
     @State private var logoData: Data? = UserDefaults.standard.data(forKey: "storeLogo")
     
@@ -38,12 +37,15 @@ struct StorefrontView: View {
     @State private var selectedProfileItem: StoreItem? = nil
     
     // MARK: - Role-Based Access Control
+    
     private var isStaff: Bool {
-        let role = session.currentUser?.role
-        return role == .admin || role == .employee
+        guard let user = session.currentUser, let activeStore = user.activeStoreId else { return false }
+        let role = user.storeRoles[activeStore]
+        return user.isSystemAdmin || role == "admin" || role == "employee"
     }
     
     // MARK: - Filtering Logic
+    
     var isFilterActive: Bool {
         !searchText.isEmpty || showInStockOnly || showOutOfStockOnly || !selectedFilterTags.isEmpty
     }
@@ -77,7 +79,6 @@ struct StorefrontView: View {
         ZStack {
             NavigationStack {
                 VStack(spacing: 0) {
-                    
                     FilterBarView(
                         searchText: $searchText,
                         showInStockOnly: $showInStockOnly,
@@ -87,7 +88,6 @@ struct StorefrontView: View {
                         isFilterActive: isFilterActive
                     )
                     
-                    // MARK: - Cleaned up ScrollView
                     ScrollView {
                         if filteredItems.isEmpty && !syncManager.isSyncing {
                             emptyStateView
@@ -114,11 +114,15 @@ struct StorefrontView: View {
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    // UNIVERSAL BARCODE SCANNER
-                    Button(action: { isShowingScanner = true }) {
+                    Button {
+                        isShowingScanner = true
+                    } label: {
                         Image(systemName: "barcode.viewfinder")
-                            .font(.title).foregroundColor(.primary)
-                            .padding(18).background(.ultraThinMaterial).clipShape(Circle())
+                            .font(.title)
+                            .foregroundStyle(.primary)
+                            .padding(18)
+                            .background(.ultraThinMaterial)
+                            .clipShape(Circle())
                             .shadow(color: .black.opacity(0.15), radius: 8, x: 0, y: 4)
                     }
                     .padding(.trailing, 20)
@@ -131,18 +135,20 @@ struct StorefrontView: View {
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) {
                         if isStaff {
-                            Button(action: {
+                            Button {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                     navigateToSettings = true
                                 }
-                            }) {
+                            } label: {
                                 Image(systemName: "gearshape.fill")
                             }
                         } else {
-                            Button(action: { isShowingUserProfile = true }) {
+                            Button {
+                                isShowingUserProfile = true
+                            } label: {
                                 Image(systemName: "person.crop.circle")
                                     .font(.title2)
-                                    .foregroundColor(.blue)
+                                    .foregroundStyle(.blue)
                             }
                         }
                     }
@@ -150,16 +156,20 @@ struct StorefrontView: View {
                     ToolbarItem(placement: .principal) {
                         Text(storeName)
                             .font(.headline)
-                            .foregroundColor(.primary)
+                            .foregroundStyle(.primary)
                     }
                     
                     ToolbarItem(placement: .primaryAction) {
                         if isStaff {
-                            Button(action: { navigateToAddItem = true }) {
+                            Button {
+                                navigateToAddItem = true
+                            } label: {
                                 Image(systemName: "plus")
                             }
                         } else {
-                            Button(action: { isShowingStoreInfo = true }) {
+                            Button {
+                                isShowingStoreInfo = true
+                            } label: {
                                 if let data = logoData, let uiImage = UIImage(data: data) {
                                     Image(uiImage: uiImage)
                                         .resizable()
@@ -168,14 +178,12 @@ struct StorefrontView: View {
                                         .clipShape(Circle())
                                 } else {
                                     Image(systemName: "info.circle")
-                                        .foregroundColor(.blue)
+                                        .foregroundStyle(.blue)
                                 }
                             }
                         }
                     }
                 }
-                // MARK: - Frosted Glass Loading Screen Overlay
-                // Note how this sits at the root of the NavigationStack, completely outside of the .toolbar modifier
                 .overlay {
                     if syncManager.isSyncing && allItems.isEmpty {
                         ZStack {
@@ -189,13 +197,12 @@ struct StorefrontView: View {
                                 
                                 Text("Entering Workspace...")
                                     .font(.headline)
-                                    .foregroundColor(.secondary)
+                                    .foregroundStyle(.secondary)
                             }
                         }
                         .transition(.opacity)
                     }
                 }
-                // Animates the frosted glass fading in and out smoothly
                 .animation(.easeInOut(duration: 0.4), value: syncManager.isSyncing)
                 .navigationDestination(item: $selectedProfileItem) { item in
                     ItemProfileView(item: item)
@@ -248,7 +255,7 @@ struct StorefrontView: View {
                 }
             }
             .task {
-                if let storeId = session.currentUser?.storeId {
+                if let storeId = session.currentUser?.activeStoreId {
                     syncManager.startListening(storeId: storeId, context: modelContext)
                     await fetchStoreProfile(storeId: storeId)
                 }
@@ -265,12 +272,12 @@ struct StorefrontView: View {
     }
     
     // MARK: - Store Profile Sync
+    
     private func fetchStoreProfile(storeId: String) async {
         let db = Firestore.firestore()
         do {
             let doc = try await db.collection("stores").document(storeId).getDocument()
             if let data = doc.data() {
-                // Update AppStorage & UserDefaults cache
                 if let name = data["storeName"] as? String { storeName = name }
                 UserDefaults.standard.set(data["storeEmail"] as? String ?? "", forKey: "storeEmail")
                 UserDefaults.standard.set(data["storePhone"] as? String ?? "", forKey: "storePhone")
@@ -278,7 +285,6 @@ struct StorefrontView: View {
                 UserDefaults.standard.set(data["storeWebsite"] as? String ?? "", forKey: "storeWebsite")
                 UserDefaults.standard.set(data["receiptReturnPolicy"] as? String ?? "", forKey: "receiptReturnPolicy")
                 
-                // Fetch and cache the new store logo
                 if let logoURLString = data["storeLogoURL"] as? String, let url = URL(string: logoURLString) {
                     if let (imageData, _) = try? await URLSession.shared.data(from: url) {
                         UserDefaults.standard.set(imageData, forKey: "storeLogo")
@@ -294,18 +300,18 @@ struct StorefrontView: View {
         }
     }
     
-    var emptyStateView: some View {
+    private var emptyStateView: some View {
         VStack(spacing: 16) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 60))
-                .foregroundColor(.gray)
+                .foregroundStyle(.gray)
             
             Text("No Items Found")
                 .font(.title2)
                 .fontWeight(.bold)
             
             Text("Try adjusting your filters or search terms.")
-                .foregroundColor(.secondary)
+                .foregroundStyle(.secondary)
             
             if isFilterActive {
                 Button("Clear Filters") {
@@ -326,6 +332,7 @@ struct StorefrontView: View {
 }
 
 // MARK: - Customer Store Info View Component
+
 struct CustomerStoreInfoView: View {
     @Environment(\.dismiss) private var dismiss
     
@@ -354,7 +361,7 @@ struct CustomerStoreInfoView: View {
                             Image(systemName: "storefront.circle.fill")
                                 .resizable()
                                 .frame(width: 100, height: 100)
-                                .foregroundColor(Color(UIColor.systemGray4))
+                                .foregroundStyle(Color(uiColor: .systemGray4))
                         }
                         
                         Text(storeName)
@@ -370,25 +377,25 @@ struct CustomerStoreInfoView: View {
                 Section(header: Text("Contact Us")) {
                     if !storeEmail.isEmpty {
                         HStack {
-                            Image(systemName: "envelope.fill").foregroundColor(.blue).frame(width: 24)
+                            Image(systemName: "envelope.fill").foregroundStyle(.blue).frame(width: 24)
                             Text(storeEmail)
                         }
                     }
                     if !storePhone.isEmpty {
                         HStack {
-                            Image(systemName: "phone.fill").foregroundColor(.green).frame(width: 24)
+                            Image(systemName: "phone.fill").foregroundStyle(.green).frame(width: 24)
                             Text(storePhone)
                         }
                     }
                     if !storeAddress.isEmpty {
                         HStack(alignment: .top) {
-                            Image(systemName: "mappin.and.ellipse").foregroundColor(.red).frame(width: 24)
+                            Image(systemName: "mappin.and.ellipse").foregroundStyle(.red).frame(width: 24)
                             Text(storeAddress)
                         }
                     }
                     if !storeWebsite.isEmpty {
                         HStack {
-                            Image(systemName: "link").foregroundColor(.purple).frame(width: 24)
+                            Image(systemName: "link").foregroundStyle(.purple).frame(width: 24)
                             Text(storeWebsite)
                         }
                     }
@@ -398,7 +405,7 @@ struct CustomerStoreInfoView: View {
                     Section(header: Text("Store Policy")) {
                         Text(receiptReturnPolicy)
                             .font(.body)
-                            .foregroundColor(.secondary)
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -414,6 +421,7 @@ struct CustomerStoreInfoView: View {
 }
 
 // MARK: - Filter Bar Component
+
 struct FilterBarView: View {
     @Environment(\.dismissSearch) private var dismissSearch
     @Binding var searchText: String
@@ -426,7 +434,7 @@ struct FilterBarView: View {
     var body: some View {
         HStack(spacing: 0) {
             if isFilterActive {
-                Button(action: {
+                Button {
                     withAnimation {
                         searchText = ""
                         dismissSearch()
@@ -434,41 +442,52 @@ struct FilterBarView: View {
                         showOutOfStockOnly = false
                         selectedFilterTags.removeAll()
                     }
-                }) {
+                } label: {
                     HStack(spacing: 4) { Image(systemName: "xmark.circle.fill"); Text("Clear") }
-                        .font(.subheadline).fontWeight(.bold).padding(.horizontal, 12).padding(.vertical, 8)
-                        .background(Color.red.opacity(0.15)).foregroundColor(.red).clipShape(Capsule())
+                        .font(.subheadline)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.red.opacity(0.15))
+                        .foregroundStyle(.red)
+                        .clipShape(Capsule())
                 }
-                .padding(.leading, 16).padding(.vertical, 10).transition(.move(edge: .leading).combined(with: .opacity))
+                .padding(.leading, 16)
+                .padding(.vertical, 10)
+                .transition(.move(edge: .leading).combined(with: .opacity))
                 
                 Divider().frame(height: 20).padding(.leading, 12)
             }
             
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    Button(action: {
+                    Button {
                         withAnimation {
                             showInStockOnly.toggle()
                             if showInStockOnly { showOutOfStockOnly = false }
                         }
-                    }) {
+                    } label: {
                         HStack { Image(systemName: showInStockOnly ? "checkmark.circle.fill" : "shippingbox.fill"); Text("In Stock") }
-                            .font(.subheadline).padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(showInStockOnly ? Color.blue : Color(UIColor.secondarySystemBackground))
-                            .foregroundColor(showInStockOnly ? .white : .primary)
+                            .font(.subheadline)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(showInStockOnly ? Color.blue : Color(uiColor: .secondarySystemBackground))
+                            .foregroundStyle(showInStockOnly ? .white : .primary)
                             .clipShape(Capsule())
                     }
                     
-                    Button(action: {
+                    Button {
                         withAnimation {
                             showOutOfStockOnly.toggle()
                             if showOutOfStockOnly { showInStockOnly = false }
                         }
-                    }) {
+                    } label: {
                         HStack { Image(systemName: showOutOfStockOnly ? "checkmark.circle.fill" : "shippingbox"); Text("Out of Stock") }
-                            .font(.subheadline).padding(.horizontal, 16).padding(.vertical, 8)
-                            .background(showOutOfStockOnly ? Color.red : Color(UIColor.secondarySystemBackground))
-                            .foregroundColor(showOutOfStockOnly ? .white : .primary)
+                            .font(.subheadline)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                            .background(showOutOfStockOnly ? Color.red : Color(uiColor: .secondarySystemBackground))
+                            .foregroundStyle(showOutOfStockOnly ? .white : .primary)
                             .clipShape(Capsule())
                     }
                     
@@ -476,22 +495,28 @@ struct FilterBarView: View {
                     
                     ForEach(allTags) { tag in
                         let isSelected = selectedFilterTags.contains(tag)
-                        Button(action: {
+                        Button {
                             withAnimation {
                                 if isSelected { selectedFilterTags.remove(tag) } else { selectedFilterTags.insert(tag) }
                             }
-                        }) {
-                            Text(tag.name).font(.subheadline).padding(.horizontal, 16).padding(.vertical, 8)
-                                .background(isSelected ? colorForTag(tag.name) : Color(UIColor.secondarySystemBackground))
-                                .foregroundColor(isSelected ? .white : .primary)
+                        } label: {
+                            Text(tag.name)
+                                .font(.subheadline)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(isSelected ? colorForTag(tag.name) : Color(uiColor: .secondarySystemBackground))
+                                .foregroundStyle(isSelected ? .white : .primary)
                                 .clipShape(Capsule())
                         }
                     }
                 }
-                .padding(.leading, isFilterActive ? 12 : 16).padding(.trailing, 16).padding(.vertical, 10)
+                .padding(.leading, isFilterActive ? 12 : 16)
+                .padding(.trailing, 16)
+                .padding(.vertical, 10)
             }
         }
-        .background(Color(UIColor.systemBackground)).shadow(color: .black.opacity(0.05), radius: 3, x: 0, y: 3)
+        .background(Color(uiColor: .systemBackground))
+        .shadow(color: .black.opacity(0.05), radius: 3, x: 0, y: 3)
         .animation(.default, value: isFilterActive)
         .animation(.default, value: showInStockOnly)
         .animation(.default, value: showOutOfStockOnly)

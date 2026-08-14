@@ -1,20 +1,21 @@
 //
 //  CartManager.swift
-//  Simple Inventory
-//
-//  Created by Michael Steenkamp on 2026-07-21.
+//  Simple Store
 //
 
 import SwiftUI
 import SwiftData
 
+/// Centralized `@MainActor` state container managing the active point-of-sale checkout session.
+/// Guarantees thread-safe access to cart items, selected personnel, and payment drafts.
+@MainActor
 @Observable
-class CartManager {
+public final class CartManager {
     var items: [StoreItem: Int] = [:]
     var selectedCustomer: Customer? = nil
     var selectedEmployee: Employee? = nil
     
-    // NEW: Payment splits now live in global memory so they aren't lost
+    // Payment splits live in global memory to persist across sheet dismissals
     var paymentSplits: [PaymentSplitDraft] = []
     
     var totalItemCount: Int {

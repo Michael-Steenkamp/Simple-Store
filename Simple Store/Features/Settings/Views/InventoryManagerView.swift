@@ -2,39 +2,69 @@
 //  InventoryManagerView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-07-20.
-//
 
 import SwiftUI
 import SwiftData
 
+// MARK: - View Model
+
+@MainActor
+@Observable
+final class InventoryManagerViewModel {
+    var searchText = ""
+    var isSearchFocused = false
+    var isShowingScanner = false
+    
+    var isShowingArchiveAlert = false
+    var itemToArchiveAlert: StoreItem? = nil
+    
+    func handleArchive(item: StoreItem, cartManager: CartManager, context: ModelContext, syncManager: SyncManager) {
+        if cartManager.items.keys.contains(where: { $0.id == item.id }) {
+            itemToArchiveAlert = item
+            isShowingArchiveAlert = true
+        } else {
+            withAnimation {
+                item.isActive = false
+                item.updatedAt = Date()
+                try? context.save()
+            }
+            Task { await syncManager.pushItemToCloud(item) }
+        }
+    }
+    
+    func confirmArchiveAndRemove(cartManager: CartManager, context: ModelContext, syncManager: SyncManager) {
+        guard let item = itemToArchiveAlert else { return }
+        withAnimation {
+            item.isActive = false
+            item.updatedAt = Date()
+            cartManager.items.removeValue(forKey: item)
+            try? context.save()
+        }
+        Task { await syncManager.pushItemToCloud(item) }
+    }
+}
+
+// MARK: - View
+
 struct InventoryManagerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
-    
-    // NEW: Inject SyncManager
     @Environment(SyncManager.self) private var syncManager
     
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
-    
-    @State private var searchText = ""
-    @State private var isSearchFocused = false
-    @State private var isShowingScanner = false
-    
-    @State private var isShowingArchiveAlert = false
-    @State private var itemToArchiveAlert: StoreItem? = nil
+    @State private var viewModel = InventoryManagerViewModel()
     
     var activeItems: [StoreItem] {
         allItems.filter { $0.isActive }
     }
     
     var filteredItems: [StoreItem] {
-        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+        if viewModel.searchText.trimmingCharacters(in: .whitespaces).isEmpty {
             return activeItems
         } else {
             return activeItems.filter { item in
-                let nameMatch = item.name.localizedCaseInsensitiveContains(searchText)
-                let barcodeMatch = item.barcode?.localizedCaseInsensitiveContains(searchText) ?? false
+                let nameMatch = item.name.localizedCaseInsensitiveContains(viewModel.searchText)
+                let barcodeMatch = item.barcode?.localizedCaseInsensitiveContains(viewModel.searchText) ?? false
                 return nameMatch || barcodeMatch
             }
         }
@@ -56,14 +86,14 @@ struct InventoryManagerView: View {
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                             Button(role: .destructive) {
-                                handleArchive(item)
+                                viewModel.handleArchive(item: item, cartManager: cartManager, context: modelContext, syncManager: syncManager)
                             } label: {
                                 Label("Archive", systemImage: "archivebox")
                             }
                         }
                         .contextMenu {
                             Button(role: .destructive) {
-                                handleArchive(item)
+                                viewModel.handleArchive(item: item, cartManager: cartManager, context: modelContext, syncManager: syncManager)
                             } label: {
                                 Label("Archive Item", systemImage: "archivebox")
                             }
@@ -75,10 +105,12 @@ struct InventoryManagerView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) {
-            Button(action: { isShowingScanner = true }) {
+            Button {
+                viewModel.isShowingScanner = true
+            } label: {
                 Image(systemName: "barcode.viewfinder")
                     .font(.title)
-                    .foregroundColor(.primary)
+                    .foregroundStyle(.primary)
                     .padding(18)
                     .background(.ultraThinMaterial)
                     .clipShape(Circle())
@@ -86,67 +118,35 @@ struct InventoryManagerView: View {
             }
             .padding(.trailing, 20)
             .padding(.bottom, 20)
-            .sensoryFeedback(.selection, trigger: isShowingScanner)
+            .sensoryFeedback(.selection, trigger: viewModel.isShowingScanner)
         }
         .navigationTitle("Inventory Manager")
         .navigationBarTitleDisplayMode(.inline)
-        .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search by name or barcode...")
+        .searchable(text: $viewModel.searchText, isPresented: $viewModel.isSearchFocused, prompt: "Search by name or barcode...")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 HStack(spacing: 16) {
-                    NavigationLink(destination: ArchivedInventoryView()) {
-                        Image(systemName: "archivebox")
-                    }
-                    
-                    NavigationLink(destination: AddItemView()) {
-                        Image(systemName: "plus")
-                    }
+                    NavigationLink(destination: ArchivedInventoryView()) { Image(systemName: "archivebox") }
+                    NavigationLink(destination: AddItemView()) { Image(systemName: "plus") }
                 }
             }
         }
-        .sheet(isPresented: $isShowingScanner) {
-            BarcodeScannerView(scannedCode: $searchText)
+        .sheet(isPresented: $viewModel.isShowingScanner) {
+            BarcodeScannerView(scannedCode: $viewModel.searchText)
         }
-        .alert("Item in Cart", isPresented: $isShowingArchiveAlert, presenting: itemToArchiveAlert) { item in
+        .alert("Item in Cart", isPresented: $viewModel.isShowingArchiveAlert, presenting: viewModel.itemToArchiveAlert) { item in
             Button("Cancel", role: .cancel) { }
             Button("Archive & Remove", role: .destructive) {
-                withAnimation {
-                    item.isActive = false
-                    item.updatedAt = Date()
-                    cartManager.items.removeValue(forKey: item)
-                    try? modelContext.save()
-                }
-                
-                // NEW: Sync the archival status to the cloud
-                Task {
-                    await syncManager.pushItemToCloud(item)
-                }
+                viewModel.confirmArchiveAndRemove(cartManager: cartManager, context: modelContext, syncManager: syncManager)
             }
         } message: { item in
             Text("This item is currently in your cart. Archiving it will remove it from the active cart. Continue?")
         }
     }
-    
-    private func handleArchive(_ item: StoreItem) {
-        if cartManager.items.keys.contains(where: { $0.id == item.id }) {
-            itemToArchiveAlert = item
-            isShowingArchiveAlert = true
-        } else {
-            withAnimation {
-                item.isActive = false
-                item.updatedAt = Date()
-                try? modelContext.save()
-            }
-            
-            // NEW: Sync the archival status to the cloud
-            Task {
-                await syncManager.pushItemToCloud(item)
-            }
-        }
-    }
 }
 
 // MARK: - List Row Component
+
 struct InventoryRowView: View {
     let item: StoreItem
     var body: some View {
@@ -163,21 +163,21 @@ struct InventoryRowView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .fill(Color.gray.opacity(0.2))
                     .frame(width: 50, height: 50)
-                    .overlay(Image(systemName: "photo").foregroundColor(.gray))
+                    .overlay(Image(systemName: "photo").foregroundStyle(.gray))
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.name).font(.headline).lineLimit(2).foregroundColor(item.isActive ? .primary : .secondary)
-                if let barcode = item.barcode, !barcode.isEmpty { Text(barcode).font(.caption).foregroundColor(.secondary).monospacedDigit() }
+                Text(item.name).font(.headline).lineLimit(2).foregroundStyle(item.isActive ? .primary : .secondary)
+                if let barcode = item.barcode, !barcode.isEmpty { Text(barcode).font(.caption).foregroundStyle(.secondary).monospacedDigit() }
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
-                Text(item.salesPrice, format: .currency(code: "CAD")).fontWeight(.semibold).foregroundColor(item.isActive ? .primary : .secondary)
+                Text(item.salesPrice, format: .currency(code: "CAD")).fontWeight(.semibold).foregroundStyle(item.isActive ? .primary : .secondary)
                 if !item.isActive {
-                    Text("Archived").font(.caption).foregroundColor(.red).fontWeight(.bold)
+                    Text("Archived").font(.caption).foregroundStyle(.red).fontWeight(.bold)
                 } else if item.stockCount <= 0 {
-                    Text("Out of Stock").font(.caption).foregroundColor(.red).fontWeight(.medium)
+                    Text("Out of Stock").font(.caption).foregroundStyle(.red).fontWeight(.medium)
                 } else {
-                    Text("\(item.stockCount) in stock").font(.caption).foregroundColor(.secondary)
+                    Text("\(item.stockCount) in stock").font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
@@ -186,11 +186,10 @@ struct InventoryRowView: View {
 }
 
 // MARK: - Archived Inventory View
+
 struct ArchivedInventoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
-    
-    // NEW: Inject SyncManager
     @Environment(SyncManager.self) private var syncManager
     
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
@@ -206,7 +205,7 @@ struct ArchivedInventoryView: View {
         List {
             if archivedItems.isEmpty {
                 Text("No archived items.")
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .italic()
                     .listRowBackground(Color.clear)
             } else {
@@ -230,22 +229,6 @@ struct ArchivedInventoryView: View {
                                 Label("Delete", systemImage: "trash")
                             }
                         }
-                        .contextMenu {
-                            Button {
-                                restoreItem(item)
-                            } label: {
-                                Label("Restore Item", systemImage: "arrow.uturn.backward")
-                            }
-                            
-                            Button(role: .destructive) {
-                                withAnimation {
-                                    itemToDeleteAlert = item
-                                    isShowingDeleteAlert = true
-                                }
-                            } label: {
-                                Label("Delete", systemImage: "trash")
-                            }
-                        }
                 }
             }
         }
@@ -254,9 +237,7 @@ struct ArchivedInventoryView: View {
         .alert("Permanently Delete", isPresented: $isShowingDeleteAlert, presenting: itemToDeleteAlert) { item in
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
-                withAnimation {
-                    permanentlyDelete(item)
-                }
+                withAnimation { permanentlyDelete(item) }
             }
         } message: { item in
             Text("Are you sure you want to permanently delete \(item.name)? This will strip its metadata. Transaction records will be preserved.")
@@ -269,11 +250,7 @@ struct ArchivedInventoryView: View {
             item.updatedAt = Date()
             try? modelContext.save()
         }
-        
-        // NEW: Sync the restored status to the cloud
-        Task {
-            await syncManager.pushItemToCloud(item)
-        }
+        Task { await syncManager.pushItemToCloud(item) }
     }
     
     private func permanentlyDelete(_ item: StoreItem) {
@@ -286,10 +263,6 @@ struct ArchivedInventoryView: View {
         
         cartManager.items.removeValue(forKey: item)
         try? modelContext.save()
-        
-        // NEW: Sync the stripped metadata status to the cloud
-        Task {
-            await syncManager.pushItemToCloud(item)
-        }
+        Task { await syncManager.pushItemToCloud(item) }
     }
 }

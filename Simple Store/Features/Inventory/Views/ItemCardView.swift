@@ -1,12 +1,12 @@
 //
 //  ItemCardView.swift
-//  Simple Inventory
-//
-//  Created by Michael Steenkamp on 2026-07-19.
+//  Simple Store
 //
 
 import SwiftUI
 
+/// A compact, stylized visual representation of an inventory item.
+/// Supports asynchronous image loading from Firebase Storage when local caching is unavailable.
 struct ItemCardView: View {
     let item: StoreItem
     
@@ -22,7 +22,6 @@ struct ItemCardView: View {
                         .frame(height: 110)
                         .clipped()
                 } else if let urlString = item.imageURL, let url = URL(string: urlString) {
-                    // Fetch from cloud if local data is missing
                     AsyncImage(url: url) { phase in
                         if let image = phase.image {
                             image
@@ -31,29 +30,27 @@ struct ItemCardView: View {
                                 .frame(height: 110)
                                 .clipped()
                         } else if phase.error != nil {
-                            Color(UIColor.secondarySystemBackground)
+                            Color(uiColor: .secondarySystemBackground)
                                 .frame(height: 110)
                                 .overlay(
                                     Image(systemName: "photo.badge.exclamationmark")
-                                        .foregroundColor(.gray.opacity(0.5))
+                                        .foregroundStyle(.gray.opacity(0.5))
                                 )
                                 .clipped()
                         } else {
-                            Color(UIColor.secondarySystemBackground)
+                            Color(uiColor: .secondarySystemBackground)
                                 .frame(height: 110)
-                                .overlay(
-                                    ProgressView()
-                                )
+                                .overlay(ProgressView())
                                 .clipped()
                         }
                     }
                 } else {
-                    Color(UIColor.secondarySystemBackground)
+                    Color(uiColor: .secondarySystemBackground)
                         .frame(height: 110)
                         .overlay(
                             Image(systemName: "photo")
                                 .font(.title)
-                                .foregroundColor(.gray.opacity(0.5))
+                                .foregroundStyle(.gray.opacity(0.5))
                         )
                 }
                 
@@ -63,7 +60,7 @@ struct ItemCardView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 4)
                         .background(Color.red.opacity(0.85))
-                        .foregroundColor(.white)
+                        .foregroundStyle(.white)
                         .background(.ultraThinMaterial)
                         .clipShape(Capsule())
                         .padding(6)
@@ -78,19 +75,19 @@ struct ItemCardView: View {
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 
-                Text("$\(item.salesPrice, specifier: "%.2f")")
+                Text(item.salesPrice, format: .currency(code: "CAD"))
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .fontWeight(.medium)
                 
                 Text("\(item.stockCount) In Stock")
                     .font(.caption2)
-                    .foregroundColor(.secondary)
+                    .foregroundStyle(.secondary)
                     .fontWeight(.light)
             }
             .padding(8)
             .frame(height: 55, alignment: .top)
-            .background(Color(UIColor.tertiarySystemGroupedBackground))
+            .background(Color(uiColor: .tertiarySystemGroupedBackground))
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .shadow(color: Color.black.opacity(0.06), radius: 5, x: 0, y: 3)

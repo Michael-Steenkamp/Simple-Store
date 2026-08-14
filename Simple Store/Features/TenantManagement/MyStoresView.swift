@@ -6,176 +6,27 @@
 import SwiftUI
 import FirebaseFirestore
 
-struct MyStoresView: View {
-    @Environment(SessionManager.self) private var session
-    @Environment(\.dismiss) private var dismiss
+// MARK: - View Model
+
+@MainActor
+@Observable
+final class MyStoresViewModel {
+    var myStores: [PublicStore] = []
+    var isLoading = true
     
-    let isPresentedFromProfile: Bool
+    var isShowingDiscovery = false
+    var isCreatingStore = false
+    var storeToLeave: PublicStore?
     
-    @State private var myStores: [PublicStore] = []
-    @State private var isLoading = true
+    /// Tracks which specific store card was tapped to show a localized spinner.
+    var processingStoreId: String? = nil
     
-    @State private var isShowingDiscovery = false
-    @State private var isCreatingStore = false
-    @State private var storeToLeave: PublicStore?
-    
-    // NEW: Tracks which specific store card was tapped to show a local spinner
-    @State private var processingStoreId: String? = nil
-    
-    let columns = [GridItem(.flexible()), GridItem(.flexible())]
-    
-    var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                // MARK: - Header
-                VStack(spacing: 8) {
-                    Text("Your Workspaces")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    
-                    Text("Select a store to enter, or manage your memberships.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding()
-                
-                // MARK: - Grid
-                if isLoading {
-                    Spacer()
-                    ProgressView("Loading workspaces...")
-                    Spacer()
-                } else if myStores.isEmpty {
-                    Spacer()
-                    ContentUnavailableView(
-                        "No Stores Joined",
-                        systemImage: "storefront",
-                        description: Text("You haven't joined any workspaces yet.")
-                    )
-                    Spacer()
-                } else {
-                    ScrollView {
-                        LazyVGrid(columns: columns, spacing: 16) {
-                            ForEach(myStores) { store in
-                                MyStoreCard(
-                                    store: store,
-                                    role: session.currentUser?.storeRoles[store.id] ?? "guest",
-                                    isAutoJoin: session.currentUser?.autoJoinStoreId == store.id,
-                                    isActiveStore: session.currentUser?.activeStoreId == store.id,
-                                    isProcessing: processingStoreId == store.id // Pass processing state
-                                ) {
-                                    // MARK: - Smooth Handoff Trigger
-                                    Task {
-                                        withAnimation { processingStoreId = store.id }
-                                        await executeHandoff(to: store.id)
-                                    }
-                                } menuActions: {
-                                    Button(action: {
-                                        Task {
-                                            withAnimation { processingStoreId = store.id }
-                                            await executeHandoff(to: store.id)
-                                        }
-                                    }) {
-                                        Label("Enter Workspace", systemImage: "arrow.right.circle")
-                                    }
-                                    
-                                    Button(action: { Task { await session.toggleAutoJoin(storeId: store.id) } }) {
-                                        if session.currentUser?.autoJoinStoreId == store.id {
-                                            Label("Remove Auto-Join", systemImage: "star.slash")
-                                        } else {
-                                            Label("Set as Auto-Join", systemImage: "star.fill")
-                                        }
-                                    }
-                                    Divider()
-                                    Button(role: .destructive, action: { storeToLeave = store }) {
-                                        Label("Leave Store", systemImage: "rectangle.portrait.and.arrow.right")
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal)
-                        .padding(.bottom, 20)
-                    }
-                }
-                
-                // MARK: - Footer Actions
-                VStack(spacing: 12) {
-                    Divider()
-                    
-                    Button(action: { isShowingDiscovery = true }) {
-                        HStack {
-                            Image(systemName: "magnifyingglass")
-                            Text("Discover New Stores")
-                        }
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
-                        .padding()
-                        .background(Color.blue.opacity(0.15))
-                        .foregroundColor(.blue)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
-                    }
-                    
-                    Button(action: { isCreatingStore = true }) {
-                        Text("Create Your Own Store")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
-                            .foregroundColor(.blue)
-                    }
-                    .padding(.bottom, 8)
-                }
-                .padding()
-                .background(Color(UIColor.systemBackground))
-            }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if isPresentedFromProfile {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("Close") { dismiss() }
-                    }
-                }
-            }
-            .fullScreenCover(isPresented: $isShowingDiscovery, onDismiss: { Task { await fetchMyStores() } }) {
-                StoreSelectionView()
-            }
-            .fullScreenCover(isPresented: $isCreatingStore, onDismiss: { Task { await fetchMyStores() } }) {
-                StoreSetupWizardView()
-            }
-            .alert(item: $storeToLeave) { store in
-                Alert(
-                    title: Text("Leave \(store.name)?"),
-                    message: Text("Are you sure you want to leave this workspace? You will need to join again to access it."),
-                    primaryButton: .destructive(Text("Leave")) {
-                        Task {
-                            await session.leaveStore(storeId: store.id)
-                            await fetchMyStores()
-                        }
-                    },
-                    secondaryButton: .cancel()
-                )
-            }
-            .task { await fetchMyStores() }
-        }
-    }
-    
-    // MARK: - Orchestrates the natural UI dismissal before switching
-    private func executeHandoff(to storeId: String) async {
-        // 1. Trigger the database swap first. This instantly prepares the Frosted Glass loading screen underneath.
-        await session.switchActiveStore(to: storeId)
-        
-        // 2. Wait a fraction of a second so the user sees the card's loading spinner acknowledge their tap
-        try? await Task.sleep(for: .milliseconds(300))
-        
-        // 3. Dismiss the sheet to elegantly reveal the new Storefront!
-        processingStoreId = nil
-        if isPresentedFromProfile { dismiss() }
-    }
-    
-    private func fetchMyStores() async {
+    func fetchMyStores(session: SessionManager) async {
         isLoading = true
+        defer { isLoading = false }
+        
         guard let storeIds = session.currentUser?.storeIds, !storeIds.isEmpty else {
             self.myStores = []
-            isLoading = false
             return
         }
         
@@ -193,16 +44,198 @@ struct MyStoresView: View {
         } catch {
             print("Failed to fetch workspaces: \(error.localizedDescription)")
         }
-        isLoading = false
+    }
+    
+    /// Orchestrates the natural UI dismissal sequence before swapping the active database context.
+    func executeHandoff(to storeId: String, session: SessionManager, isPresentedFromProfile: Bool, dismissAction: DismissAction) async {
+        // 1. Trigger the database swap. This instantly prepares the Frosted Glass loading screen underneath.
+        await session.switchActiveStore(to: storeId)
+        
+        // 2. Wait a fraction of a second so the user sees the card's loading spinner acknowledge their tap.
+        try? await Task.sleep(for: .milliseconds(300))
+        
+        // 3. Reset state and dismiss the sheet to elegantly reveal the new Storefront.
+        processingStoreId = nil
+        if isPresentedFromProfile {
+            dismissAction()
+        }
     }
 }
+
+// MARK: - View
+
+/// The administrative dashboard for managing joined workspaces and seamlessly transitioning between them.
+struct MyStoresView: View {
+    @Environment(SessionManager.self) private var session
+    @Environment(\.dismiss) private var dismiss
+    
+    let isPresentedFromProfile: Bool
+    @State private var viewModel = MyStoresViewModel()
+    
+    let columns = [GridItem(.flexible()), GridItem(.flexible())]
+    
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                headerSection
+                gridSection
+                footerActions
+            }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if isPresentedFromProfile {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { dismiss() }
+                    }
+                }
+            }
+            .fullScreenCover(isPresented: $viewModel.isShowingDiscovery, onDismiss: { Task { await viewModel.fetchMyStores(session: session) } }) {
+                StoreSelectionView()
+            }
+            .fullScreenCover(isPresented: $viewModel.isCreatingStore, onDismiss: { Task { await viewModel.fetchMyStores(session: session) } }) {
+                StoreSetupWizardView()
+            }
+            .alert(item: $viewModel.storeToLeave) { store in
+                Alert(
+                    title: Text("Leave \(store.name)?"),
+                    message: Text("Are you sure you want to leave this workspace? You will need to join again to access it."),
+                    primaryButton: .destructive(Text("Leave")) {
+                        Task {
+                            await session.leaveStore(storeId: store.id)
+                            await viewModel.fetchMyStores(session: session)
+                        }
+                    },
+                    secondaryButton: .cancel()
+                )
+            }
+            .task {
+                await viewModel.fetchMyStores(session: session)
+            }
+        }
+    }
+    
+    // MARK: - Subviews
+    
+    private var headerSection: some View {
+        VStack(spacing: 8) {
+            Text("Your Workspaces")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            
+            Text("Select a store to enter, or manage your memberships.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding()
+    }
+    
+    @ViewBuilder
+    private var gridSection: some View {
+        if viewModel.isLoading {
+            Spacer()
+            ProgressView("Loading workspaces...")
+            Spacer()
+        } else if viewModel.myStores.isEmpty {
+            Spacer()
+            ContentUnavailableView(
+                "No Stores Joined",
+                systemImage: "storefront",
+                description: Text("You haven't joined any workspaces yet.")
+            )
+            Spacer()
+        } else {
+            ScrollView {
+                LazyVGrid(columns: columns, spacing: 16) {
+                    ForEach(viewModel.myStores) { store in
+                        MyStoreCard(
+                            store: store,
+                            role: session.currentUser?.storeRoles[store.id] ?? "guest",
+                            isAutoJoin: session.currentUser?.autoJoinStoreId == store.id,
+                            isActiveStore: session.currentUser?.activeStoreId == store.id,
+                            isProcessing: viewModel.processingStoreId == store.id
+                        ) {
+                            Task {
+                                withAnimation { viewModel.processingStoreId = store.id }
+                                await viewModel.executeHandoff(to: store.id, session: session, isPresentedFromProfile: isPresentedFromProfile, dismissAction: dismiss)
+                            }
+                        } menuActions: {
+                            Button {
+                                Task {
+                                    withAnimation { viewModel.processingStoreId = store.id }
+                                    await viewModel.executeHandoff(to: store.id, session: session, isPresentedFromProfile: isPresentedFromProfile, dismissAction: dismiss)
+                                }
+                            } label: {
+                                Label("Enter Workspace", systemImage: "arrow.right.circle")
+                            }
+                            
+                            Button {
+                                Task { await session.toggleAutoJoin(storeId: store.id) }
+                            } label: {
+                                if session.currentUser?.autoJoinStoreId == store.id {
+                                    Label("Remove Auto-Join", systemImage: "star.slash")
+                                } else {
+                                    Label("Set as Auto-Join", systemImage: "star.fill")
+                                }
+                            }
+                            Divider()
+                            Button(role: .destructive) {
+                                viewModel.storeToLeave = store
+                            } label: {
+                                Label("Leave Store", systemImage: "rectangle.portrait.and.arrow.right")
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 20)
+            }
+        }
+    }
+    
+    private var footerActions: some View {
+        VStack(spacing: 12) {
+            Divider()
+            
+            Button {
+                viewModel.isShowingDiscovery = true
+            } label: {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                    Text("Discover New Stores")
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.accentColor.opacity(0.15))
+                .foregroundStyle(Color.accentColor)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            
+            Button {
+                viewModel.isCreatingStore = true
+            } label: {
+                Text("Create Your Own Store")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundStyle(Color.accentColor)
+            }
+            .padding(.bottom, 8)
+        }
+        .padding()
+        .background(Color(uiColor: .systemBackground))
+    }
+}
+
+// MARK: - Card Component
 
 struct MyStoreCard<MenuContent: View>: View {
     let store: PublicStore
     let role: String
     let isAutoJoin: Bool
     let isActiveStore: Bool
-    let isProcessing: Bool // NEW
+    let isProcessing: Bool
     let onEnter: () -> Void
     @ViewBuilder let menuActions: () -> MenuContent
     
@@ -227,8 +260,8 @@ struct MyStoreCard<MenuContent: View>: View {
                     } label: {
                         Image(systemName: "ellipsis.circle.fill")
                             .font(.title2)
-                            .foregroundColor(.gray.opacity(0.8))
-                            .background(Circle().fill(Color(UIColor.secondarySystemBackground)))
+                            .foregroundStyle(.gray.opacity(0.8))
+                            .background(Circle().fill(Color(uiColor: .secondarySystemBackground)))
                     }
                     .offset(x: 25, y: -10)
                 }
@@ -236,38 +269,37 @@ struct MyStoreCard<MenuContent: View>: View {
                 VStack(spacing: 4) {
                     Text(store.name)
                         .font(.headline)
-                        .foregroundColor(.primary)
+                        .foregroundStyle(.primary)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                     
                     HStack(spacing: 4) {
                         if isAutoJoin {
-                            Image(systemName: "star.fill").foregroundColor(.yellow)
+                            Image(systemName: "star.fill").foregroundStyle(.yellow)
                         }
                         Text(role.capitalized)
                     }
                     .font(.caption2)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 4)
-                    .background(Color.blue.opacity(0.1))
-                    .foregroundColor(.blue)
+                    .background(Color.accentColor.opacity(0.1))
+                    .foregroundStyle(Color.accentColor)
                     .clipShape(Capsule())
                 }
             }
             .padding()
             .frame(maxWidth: .infinity)
             .frame(height: 170)
-            .background(Color(UIColor.secondarySystemBackground))
+            .background(Color(uiColor: .secondarySystemBackground))
             .cornerRadius(16)
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
                     .stroke(isActiveStore ? Color.yellow.opacity(0.8) : Color.clear, lineWidth: 2)
             )
-            // MARK: - Darkened spinner overlay to acknowledge the user's tap instantly
             .overlay {
                 if isProcessing {
                     ZStack {
-                        Color(UIColor.secondarySystemBackground).opacity(0.85)
+                        Color(uiColor: .secondarySystemBackground).opacity(0.85)
                         ProgressView().controlSize(.large)
                     }
                     .cornerRadius(16)
@@ -281,8 +313,8 @@ struct MyStoreCard<MenuContent: View>: View {
     
     var placeholderLogo: some View {
         Circle()
-            .fill(Color(UIColor.tertiarySystemBackground))
+            .fill(Color(uiColor: .tertiarySystemBackground))
             .frame(width: 70, height: 70)
-            .overlay(Image(systemName: "storefront.fill").foregroundColor(.gray).font(.title2))
+            .overlay(Image(systemName: "storefront.fill").foregroundStyle(.gray).font(.title2))
     }
 }

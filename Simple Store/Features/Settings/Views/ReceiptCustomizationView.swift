@@ -1,11 +1,12 @@
 //
 //  ReceiptCustomizationView.swift
-//
-//  Created by Michael Steenkamp on 2026-07-20.
+//  Simple Store
 //
 
 import SwiftUI
 
+/// Provides an interface for configuring the visual layout and text content of generated PDF receipts.
+/// Binds directly to `@AppStorage` to ensure settings persist locally across sessions.
 struct ReceiptCustomizationView: View {
     @AppStorage("receiptThankYou") private var receiptThankYou: String = ""
     @AppStorage("receiptReturnPolicy") private var receiptReturnPolicy: String = ""
@@ -24,14 +25,14 @@ struct ReceiptCustomizationView: View {
                 VStack(alignment: .leading) {
                     Text("Header Message")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                     TextField("e.g. Thank you for your business!", text: $receiptThankYou, axis: .vertical)
                 }
                 
                 VStack(alignment: .leading) {
                     Text("Footer / Policy")
                         .font(.caption)
-                        .foregroundColor(.secondary)
+                        .foregroundStyle(.secondary)
                     TextField("e.g. No returns on opened items.", text: $receiptReturnPolicy, axis: .vertical)
                 }
             }

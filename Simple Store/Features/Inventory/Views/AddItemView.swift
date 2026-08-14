@@ -2,29 +2,83 @@
 //  AddItemView.swift
 //  Simple Store
 //
-//  Created by Michael Steenkamp on 2026-07-18.
-//
 
 import SwiftUI
 import SwiftData
 import PhotosUI
 
+// MARK: - View Model
+
+/// Manages form state, validation, and multi-tenant data ingestion for new inventory items.
+@MainActor
+@Observable
+final class AddItemViewModel {
+    var name: String = ""
+    var desc: String = ""
+    var stockCount: Int = 0
+    var salesPriceString: String = ""
+    var itemCostString: String = ""
+    var barcode: String = ""
+    
+    var selectedTags: [ItemTag] = []
+    var imageData: Data? = nil
+    
+    var isFormValid: Bool {
+        !name.trimmingCharacters(in: .whitespaces).isEmpty && Double(salesPriceString) != nil
+    }
+    
+    /// Provisions a new inventory item, uploads its photo to Storage, and syncs to Firestore.
+    func saveItem(
+        context: ModelContext,
+        session: SessionManager,
+        syncManager: SyncManager
+    ) async {
+        guard isFormValid else { return }
+        
+        let finalPrice = Double(salesPriceString) ?? 0.0
+        let finalCost = Double(itemCostString) ?? 0.0
+        let storeId = session.currentUser?.activeStoreId ?? ""
+        
+        let newItem = StoreItem(
+            id: UUID(),
+            storeId: storeId,
+            tags: selectedTags,
+            name: name.trimmingCharacters(in: .whitespaces),
+            desc: desc.trimmingCharacters(in: .whitespaces).isEmpty ? nil : desc.trimmingCharacters(in: .whitespaces),
+            stockCount: stockCount,
+            salesPrice: finalPrice,
+            itemCost: finalCost,
+            barcode: barcode.trimmingCharacters(in: .whitespaces).isEmpty ? nil : barcode.trimmingCharacters(in: .whitespaces),
+            imageData: imageData
+        )
+        
+        context.insert(newItem)
+        try? context.save()
+        
+        if let data = imageData {
+            if let url = try? await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: newItem.id.uuidString) {
+                newItem.imageURL = url
+                try? context.save()
+            }
+        }
+        
+        await syncManager.pushItemToCloud(newItem)
+        
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+    }
+}
+
+// MARK: - View
+
+/// Provides the interface for creating and provisioning new inventory items.
 struct AddItemView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    
     @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
     
-    @State private var name: String = ""
-    @State private var desc: String = ""
-    @State private var stockCount: Int = 0
-    @State private var salesPriceString: String = ""
-    @State private var itemCostString: String = ""
-    @State private var barcode: String = ""
-    
-    @State private var selectedTags: [ItemTag] = []
-    @State private var imageData: Data? = nil
+    @State private var viewModel = AddItemViewModel()
     
     @State private var isShowingScanner = false
     @State private var isShowingTagManager = false
@@ -37,164 +91,13 @@ struct AddItemView: View {
     }
     @FocusState private var focusedField: FocusField?
     
-    var isFormValid: Bool {
-        !name.trimmingCharacters(in: .whitespaces).isEmpty && Double(salesPriceString) != nil
-    }
-    
     var body: some View {
         NavigationStack {
             Form {
-                // MARK: - Product Image
-                Section {
-                    VStack(spacing: 16) {
-                        Button(action: {
-                            isShowingPhotoOptions = true
-                        }) {
-                            VStack(spacing: 8) {
-                                if let data = imageData, let uiImage = UIImage(data: data) {
-                                    Image(uiImage: uiImage)
-                                        .resizable()
-                                        .scaledToFill()
-                                        .frame(width: 120, height: 120)
-                                        .clipShape(Circle())
-                                        .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
-                                } else {
-                                    ZStack {
-                                        Circle()
-                                            .fill(Color(UIColor.secondarySystemBackground))
-                                            .frame(width: 120, height: 120)
-                                        Image(systemName: "camera.macro")
-                                            .font(.system(size: 40))
-                                            .foregroundColor(Color(UIColor.systemGray3))
-                                    }
-                                }
-                                
-                                Text(imageData == nil ? "Add Product Photo" : "Change Photo")
-                                    .font(.caption)
-                                    .fontWeight(.semibold)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 6)
-                                    .background(Color(UIColor.secondarySystemFill))
-                                    .foregroundColor(.primary)
-                                    .clipShape(Capsule())
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.top, 10)
-                        .padding(.bottom, 10)
-                        
-                        TextField("Item Name", text: $name)
-                            .font(.title2)
-                            .fontWeight(.bold)
-                            .multilineTextAlignment(.center)
-                            .padding(.bottom, 10)
-                    }
-                    .frame(maxWidth: .infinity)
-                }
-                
-                // MARK: - Pricing & Stock
-                Section(
-                    header: Text("Pricing & Inventory"),
-                    footer: Text(salesPriceString.isEmpty ? "Sales price is required." : "")
-                        .foregroundColor(.red)
-                ) {
-                    HStack {
-                        Image(systemName: "tag")
-                            .foregroundColor(salesPriceString.isEmpty ? .red : .green)
-                            .frame(width: 24)
-                        Text("$").foregroundColor(.secondary)
-                        TextField("0.00 (Sales Price)", text: $salesPriceString)
-                            .keyboardType(.decimalPad)
-                            .focused($focusedField, equals: .price)
-                    }
-                    
-                    HStack {
-                        Image(systemName: "building.2")
-                            .foregroundColor(.gray)
-                            .frame(width: 24)
-                        Text("$").foregroundColor(.secondary)
-                        TextField("0.00 (Wholesale Cost)", text: $itemCostString)
-                            .keyboardType(.decimalPad)
-                            .focused($focusedField, equals: .cost)
-                    }
-                    
-                    Stepper(value: $stockCount, in: 0...9999) {
-                        HStack {
-                            Image(systemName: "shippingbox")
-                                .foregroundColor(.gray)
-                                .frame(width: 24)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Stock").font(.caption2).foregroundColor(.secondary)
-                                Text("\(stockCount)").fontWeight(.semibold)
-                            }
-                        }
-                    }
-                }
-                
-                // MARK: - Organization
-                Section(header: Text("Organization & Identifiers")) {
-                    HStack {
-                        Image(systemName: "barcode")
-                            .foregroundColor(.gray)
-                            .frame(width: 24)
-                        
-                        TextField("Scan or type barcode...", text: $barcode)
-                            .focused($focusedField, equals: .barcode)
-                            .submitLabel(.done)
-                        
-                        Spacer()
-                        
-                        Button(action: {
-                            isShowingScanner = true
-                        }) {
-                            Image(systemName: "barcode.viewfinder")
-                                .font(.title3)
-                                .foregroundColor(.blue)
-                        }
-                    }
-                    
-                    Button(action: {
-                        isShowingTagManager = true
-                    }) {
-                        HStack {
-                            Image(systemName: "tag.circle")
-                                .foregroundColor(.gray)
-                                .frame(width: 24)
-                            
-                            if selectedTags.isEmpty {
-                                Text("Assign Tags")
-                                    .foregroundColor(.primary)
-                            } else {
-                                ScrollView(.horizontal, showsIndicators: false) {
-                                    HStack {
-                                        ForEach(selectedTags) { tag in
-                                            TagPillView(name: tag.name)
-                                        }
-                                    }
-                                }
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                }
-                
-                // MARK: - Basic Details
-                Section(header: Text("Basic Details")) {
-                    
-                    HStack(alignment: .top) {
-                        Image(systemName: "text.alignleft")
-                            .foregroundColor(.gray)
-                            .frame(width: 24)
-                            .padding(.top, 4)
-                        TextField("Notes or description...", text: $desc, axis: .vertical)
-                            .lineLimit(2...5)
-                            .focused($focusedField, equals: .desc)
-                    }
-                }
+                photoSection
+                pricingSection
+                organizationSection
+                detailsSection
             }
             .scrollDismissesKeyboard(.automatic)
             .navigationTitle("New Item")
@@ -202,65 +105,188 @@ struct AddItemView: View {
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
-                        saveItem()
+                        Task {
+                            await viewModel.saveItem(context: modelContext, session: session, syncManager: syncManager)
+                            dismiss()
+                        }
                     }
                     .fontWeight(.bold)
-                    .disabled(!isFormValid)
+                    .disabled(!viewModel.isFormValid)
                 }
             }
             .confirmationDialog("Add Photo", isPresented: $isShowingPhotoOptions, titleVisibility: .visible) {
                 Button("Take Photo") { imageSource = .camera; isShowingImagePicker = true }
                 Button("Choose from Library") { imageSource = .photoLibrary; isShowingImagePicker = true }
-                if imageData != nil { Button("Remove Photo", role: .destructive) { imageData = nil } }
+                if viewModel.imageData != nil { Button("Remove Photo", role: .destructive) { viewModel.imageData = nil } }
                 Button("Cancel", role: .cancel) { }
             }
             .fullScreenCover(isPresented: $isShowingImagePicker) {
-                ImagePicker(sourceType: imageSource, selectedImage: $imageData).ignoresSafeArea()
+                ImagePicker(sourceType: imageSource, selectedImage: $viewModel.imageData).ignoresSafeArea()
             }
             .sheet(isPresented: $isShowingScanner) {
-                BarcodeScannerView(scannedCode: $barcode)
+                BarcodeScannerView(scannedCode: $viewModel.barcode)
             }
             .sheet(isPresented: $isShowingTagManager) {
                 NavigationStack {
-                    TagManagerView(selectedTags: $selectedTags, isSelectionMode: true)
+                    TagManagerView(selectedTags: $viewModel.selectedTags, isSelectionMode: true)
                 }
             }
         }
     }
     
-    private func saveItem() {
-        let finalPrice = Double(salesPriceString) ?? 0.0
-        let finalCost = Double(itemCostString) ?? 0.0
-        
-        let newItem = StoreItem(
-            storeId: session.currentUser?.storeId,
-            tags: selectedTags,
-            name: name.trimmingCharacters(in: .whitespaces),
-            desc: desc.trimmingCharacters(in: .whitespaces).isEmpty ? nil : desc.trimmingCharacters(in: .whitespaces),
-            stockCount: stockCount,
-            salesPrice: finalPrice,
-            itemCost: finalCost,
-            barcode: barcode.trimmingCharacters(in: .whitespaces).isEmpty ? nil : barcode.trimmingCharacters(in: .whitespaces),
-            imageData: imageData
-        )
-        
-        modelContext.insert(newItem)
-        try? modelContext.save()
-        
-        // NEW: Push image to Firebase Storage if exists before updating cloud database
-        Task {
-            if let data = imageData, let storeId = session.currentUser?.storeId {
-                if let url = try? await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: newItem.id.uuidString) {
-                    newItem.imageURL = url
-                    try? modelContext.save()
+    // MARK: - Subviews
+    
+    private var photoSection: some View {
+        Section {
+            VStack(spacing: 16) {
+                Button {
+                    isShowingPhotoOptions = true
+                } label: {
+                    VStack(spacing: 8) {
+                        if let data = viewModel.imageData, let uiImage = UIImage(data: data) {
+                            Image(uiImage: uiImage)
+                                .resizable()
+                                .scaledToFill()
+                                .frame(width: 120, height: 120)
+                                .clipShape(Circle())
+                                .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
+                        } else {
+                            ZStack {
+                                Circle()
+                                    .fill(Color(uiColor: .secondarySystemBackground))
+                                    .frame(width: 120, height: 120)
+                                Image(systemName: "camera.macro")
+                                    .font(.system(size: 40))
+                                    .foregroundStyle(Color(uiColor: .systemGray3))
+                            }
+                        }
+                        
+                        Text(viewModel.imageData == nil ? "Add Product Photo" : "Change Photo")
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .background(Color(uiColor: .secondarySystemFill))
+                            .foregroundStyle(.primary)
+                            .clipShape(Capsule())
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.vertical, 10)
+                
+                TextField("Item Name", text: $viewModel.name)
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .multilineTextAlignment(.center)
+                    .padding(.bottom, 10)
+            }
+            .frame(maxWidth: .infinity)
+        }
+    }
+    
+    private var pricingSection: some View {
+        Section(
+            header: Text("Pricing & Inventory"),
+            footer: Text(viewModel.salesPriceString.isEmpty ? "Sales price is required." : "")
+                .foregroundStyle(.red)
+        ) {
+            HStack {
+                Image(systemName: "tag")
+                    .foregroundStyle(viewModel.salesPriceString.isEmpty ? .red : .green)
+                    .frame(width: 24)
+                Text("$").foregroundStyle(.secondary)
+                TextField("0.00 (Sales Price)", text: $viewModel.salesPriceString)
+                    .keyboardType(.decimalPad)
+                    .focused($focusedField, equals: .price)
+            }
+            
+            HStack {
+                Image(systemName: "building.2")
+                    .foregroundStyle(.gray)
+                    .frame(width: 24)
+                Text("$").foregroundStyle(.secondary)
+                TextField("0.00 (Wholesale Cost)", text: $viewModel.itemCostString)
+                    .keyboardType(.decimalPad)
+                    .focused($focusedField, equals: .cost)
+            }
+            
+            Stepper(value: $viewModel.stockCount, in: 0...9999) {
+                HStack {
+                    Image(systemName: "shippingbox")
+                        .foregroundStyle(.gray)
+                        .frame(width: 24)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Stock").font(.caption2).foregroundStyle(.secondary)
+                        Text("\(viewModel.stockCount)").fontWeight(.semibold)
+                    }
                 }
             }
-            await syncManager.pushItemToCloud(newItem)
         }
-        
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
-        
-        dismiss()
+    }
+    
+    private var organizationSection: some View {
+        Section(header: Text("Organization & Identifiers")) {
+            HStack {
+                Image(systemName: "barcode")
+                    .foregroundStyle(.gray)
+                    .frame(width: 24)
+                
+                TextField("Scan or type barcode...", text: $viewModel.barcode)
+                    .focused($focusedField, equals: .barcode)
+                    .submitLabel(.done)
+                
+                Spacer()
+                
+                Button {
+                    isShowingScanner = true
+                } label: {
+                    Image(systemName: "barcode.viewfinder")
+                        .font(.title3)
+                        .foregroundStyle(.blue)
+                }
+            }
+            
+            Button {
+                isShowingTagManager = true
+            } label: {
+                HStack {
+                    Image(systemName: "tag.circle")
+                        .foregroundStyle(.gray)
+                        .frame(width: 24)
+                    
+                    if viewModel.selectedTags.isEmpty {
+                        Text("Assign Tags")
+                            .foregroundStyle(.primary)
+                    } else {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack {
+                                ForEach(viewModel.selectedTags) { tag in
+                                    TagPillView(name: tag.name)
+                                }
+                            }
+                        }
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+        }
+    }
+    
+    private var detailsSection: some View {
+        Section(header: Text("Basic Details")) {
+            HStack(alignment: .top) {
+                Image(systemName: "text.alignleft")
+                    .foregroundStyle(.gray)
+                    .frame(width: 24)
+                    .padding(.top, 4)
+                TextField("Notes or description...", text: $viewModel.desc, axis: .vertical)
+                    .lineLimit(2...5)
+                    .focused($focusedField, equals: .desc)
+            }
+        }
     }
 }
