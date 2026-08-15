@@ -13,10 +13,7 @@ import SwiftData
 final class EmployeeManagementViewModel {
     var searchText = ""
     var isSearchFocused = false
-    var isShowingAddSheet = false
     var adminNames: [String] = []
-    
-    var newEmployeeName = ""
     
     func promoteToAdmin(employee: Employee, session: SessionManager) async {
         do {
@@ -26,29 +23,12 @@ final class EmployeeManagementViewModel {
             print(error.localizedDescription)
         }
     }
-    
-    func archiveEmployee(employee: Employee, context: ModelContext, syncManager: SyncManager) async {
-        employee.isActive = false
-        try? context.save()
-        await syncManager.pushEmployeeToCloud(employee)
-    }
-    
-    func saveNewEmployee(session: SessionManager, context: ModelContext, syncManager: SyncManager) async {
-        // Safely resolves the optional storeId to satisfy the strictly typed model init
-        let storeId = session.currentUser?.activeStoreId ?? ""
-        let newEmployee = Employee(
-            id: UUID(),
-            storeId: storeId,
-            name: newEmployeeName
-        )
-        context.insert(newEmployee)
-        try? context.save()
-        await syncManager.pushEmployeeToCloud(newEmployee)
-    }
 }
 
 // MARK: - View
 
+/// An administrative interface for viewing and managing active staff members.
+/// Note: New staff can only be created by promoting an existing Customer profile to an Employee.
 struct EmployeeManagementView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SyncManager.self) private var syncManager
@@ -94,15 +74,6 @@ struct EmployeeManagementView: View {
                                 NavigationLink(destination: EmployeeDetailView(employee: admin)) {
                                     EmployeeRowView(employee: admin, isPinnedAdmin: true)
                                 }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    if isAdmin {
-                                        Button(role: .destructive) {
-                                            Task { await viewModel.archiveEmployee(employee: admin, context: modelContext, syncManager: syncManager) }
-                                        } label: {
-                                            Label("Archive", systemImage: "archivebox")
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
@@ -123,15 +94,6 @@ struct EmployeeManagementView: View {
                                         .tint(.yellow)
                                     }
                                 }
-                                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                    if isAdmin {
-                                        Button(role: .destructive) {
-                                            Task { await viewModel.archiveEmployee(employee: staff, context: modelContext, syncManager: syncManager) }
-                                        } label: {
-                                            Label("Archive", systemImage: "archivebox")
-                                        }
-                                    }
-                                }
                             }
                         }
                     }
@@ -140,24 +102,13 @@ struct EmployeeManagementView: View {
             }
         }
         .navigationTitle("Employee Directory")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: 16) {
-                    if isAdmin {
-                        NavigationLink(destination: ArchivedEmployeesView()) { Image(systemName: "archivebox") }
-                        Button { viewModel.isShowingAddSheet = true } label: { Image(systemName: "plus") }
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $viewModel.isShowingAddSheet) {
-            AddEmployeeView(viewModel: viewModel)
-        }
         .task {
             viewModel.adminNames = await session.fetchStoreAdminNames()
         }
     }
 }
+
+// MARK: - Row Component
 
 struct EmployeeRowView: View {
     let employee: Employee
@@ -174,108 +125,5 @@ struct EmployeeRowView: View {
             }
         }
         .padding(.vertical, 4)
-    }
-}
-
-// MARK: - Add Employee Sheet
-
-struct AddEmployeeView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-    @Environment(SessionManager.self) private var session
-    @Environment(SyncManager.self) private var syncManager
-    
-    @Bindable var viewModel: EmployeeManagementViewModel
-    
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section(header: Text("Employee Details"), footer: Text("Employees can be selected during the checkout process to track who made the sale.")) {
-                    TextField("Full Name", text: $viewModel.newEmployeeName).textContentType(.name)
-                }
-            }
-            .navigationTitle("New Employee")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        Task {
-                            await viewModel.saveNewEmployee(session: session, context: modelContext, syncManager: syncManager)
-                            viewModel.newEmployeeName = ""
-                            dismiss()
-                        }
-                    }
-                    .disabled(viewModel.newEmployeeName.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-        }
-    }
-}
-
-// MARK: - Archived Employees View
-
-struct ArchivedEmployeesView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(SyncManager.self) private var syncManager
-    
-    @Query(sort: \Employee.name) private var allEmployees: [Employee]
-    
-    var archivedEmployees: [Employee] {
-        allEmployees.filter { !$0.isActive }
-    }
-    
-    var body: some View {
-        List {
-            if archivedEmployees.isEmpty {
-                Text("No archived employees.")
-                    .foregroundStyle(.secondary)
-                    .italic()
-                    .listRowBackground(Color.clear)
-            } else {
-                ForEach(archivedEmployees) { employee in
-                    HStack {
-                        Text(employee.name)
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                        
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
-                    .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                        Button {
-                            withAnimation { restoreEmployee(employee) }
-                        } label: {
-                            Label("Restore", systemImage: "arrow.uturn.backward")
-                        }
-                        .tint(.green)
-                    }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) {
-                            withAnimation { permanentlyDelete(employee) }
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                }
-            }
-        }
-        .navigationTitle("Archived Employees")
-        .navigationBarTitleDisplayMode(.inline)
-    }
-    
-    private func restoreEmployee(_ employee: Employee) {
-        employee.isActive = true
-        try? modelContext.save()
-        Task { await syncManager.pushEmployeeToCloud(employee) }
-    }
-    
-    private func permanentlyDelete(_ employee: Employee) {
-        employee.isActive = false
-        Task {
-            await syncManager.pushEmployeeToCloud(employee)
-            modelContext.delete(employee)
-            try? modelContext.save()
-        }
     }
 }

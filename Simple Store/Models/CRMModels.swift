@@ -41,7 +41,8 @@ public final class Customer {
     @Relationship(inverse: \CustomerStatus.customers)
     public var status: CustomerStatus?
     
-    @Relationship(deleteRule: .cascade)
+    // CRITICAL: Changed from .cascade to .nullify to protect the financial ledger.
+    @Relationship(deleteRule: .nullify)
     public var transactions: [Transaction]?
     
     public init(
@@ -67,7 +68,6 @@ public final class Customer {
         self.isActive = true
     }
 }
-
 public extension Customer {
     /// A computed property returning the combined first and last name.
     var fullName: String {
@@ -81,12 +81,16 @@ public final class Employee {
     @Attribute(.unique) public var id: UUID
     public var storeId: String
     public var name: String
+    public var email: String?
+    public var phone: String?
     public var isActive: Bool
     
-    public init(id: UUID = UUID(), storeId: String, name: String, isActive: Bool = true) {
+    public init(id: UUID = UUID(), storeId: String, name: String, email: String? = nil, phone: String? = nil, isActive: Bool = true) {
         self.id = id
         self.storeId = storeId
         self.name = name
+        self.email = email
+        self.phone = phone
         self.isActive = isActive
     }
 }
@@ -223,12 +227,16 @@ public struct EmployeeDTO: Codable, Sendable, Identifiable {
     public let id: String
     public let storeId: String
     public let name: String
+    public let email: String?
+    public let phone: String?
     public let isActive: Bool
     
     public init(from model: Employee) {
         self.id = model.id.uuidString
         self.storeId = model.storeId
         self.name = model.name
+        self.email = model.email
+        self.phone = model.phone
         self.isActive = model.isActive
     }
 }

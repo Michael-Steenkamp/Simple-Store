@@ -1,14 +1,21 @@
 //
-// SharedComponents.swift
-// Simple Store
+//  SharedComponents.swift
+//  Simple Store
 //
 
 import SwiftUI
+import UIKit
+
+// MARK: - Tagging & Categorization
 
 /// A highly reusable visual tag component that generates a consistent, deterministic background color based on the provided string.
 @MainActor
 public struct TagPillView: View {
     public let name: String
+    
+    public init(name: String) {
+        self.name = name
+    }
     
     public var body: some View {
         HStack(spacing: 4) {
@@ -36,6 +43,10 @@ public struct TagPillView: View {
 public struct FormTagRow: View {
     public let tagNames: [String]
     
+    public init(tagNames: [String]) {
+        self.tagNames = tagNames
+    }
+    
     public var body: some View {
         if tagNames.isEmpty {
             Text("No tags selected")
@@ -53,12 +64,20 @@ public struct FormTagRow: View {
     }
 }
 
+// MARK: - Actionable UI Elements
+
 /// A selectable filter pill used primarily in horizontal scroll views for scoping list data.
 @MainActor
 public struct FilterPill: View {
     public let title: String
     public let isSelected: Bool
     public let action: () -> Void
+    
+    public init(title: String, isSelected: Bool, action: @escaping () -> Void) {
+        self.title = title
+        self.isSelected = isSelected
+        self.action = action
+    }
     
     public var body: some View {
         Button(action: action) {
@@ -83,6 +102,11 @@ public struct CopyableContactRow: View {
     public let value: String
     
     @State private var showCopiedIndicator = false
+    
+    public init(icon: String, value: String) {
+        self.icon = icon
+        self.value = value
+    }
     
     public var body: some View {
         Button(action: {
@@ -124,12 +148,60 @@ public struct CopyableContactRow: View {
     }
 }
 
+/// A circular photo selection button utilized heavily in data creation and editing forms.
+@MainActor
+public struct ItemPhotoSelectionButton: View {
+    public let imageData: Data?
+    public let action: () -> Void
+    
+    public init(imageData: Data?, action: @escaping () -> Void) {
+        self.imageData = imageData
+        self.action = action
+    }
+    
+    public var body: some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                if let data = imageData, let uiImage = UIImage(data: data) {
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: 100, height: 100)
+                        .clipShape(Circle())
+                } else {
+                    Image(systemName: "photo.circle.fill")
+                        .resizable()
+                        .frame(width: 100, height: 100)
+                        .foregroundColor(Color(UIColor.systemGray4))
+                }
+                
+                Text(imageData == nil ? "Add Photo" : "Edit")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color(UIColor.secondarySystemFill))
+                    .foregroundColor(.primary)
+                    .clipShape(Capsule())
+            }
+        }
+    }
+}
+
+// MARK: - Custom Input Fields
+
 /// A modern, reusable text field with a prominent title and an integrated clear button.
 @MainActor
 public struct ModernTextField: View {
     public let title: String
     public let placeholder: String
     @Binding public var text: String
+    
+    public init(title: String, placeholder: String, text: Binding<String>) {
+        self.title = title
+        self.placeholder = placeholder
+        self._text = text
+    }
     
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -166,6 +238,11 @@ public struct ModernCurrencyField: View {
     public let title: String
     @Binding public var text: String
     
+    public init(title: String, text: Binding<String>) {
+        self.title = title
+        self._text = text
+    }
+    
     public var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
@@ -199,47 +276,18 @@ public struct ModernCurrencyField: View {
     }
 }
 
-/// A circular photo selection button utilized heavily in data creation and editing forms.
-@MainActor
-public struct ItemPhotoSelectionButton: View {
-    public let imageData: Data?
-    public let action: () -> Void
-    
-    public var body: some View {
-        Button(action: action) {
-            VStack(spacing: 8) {
-                if let data = imageData, let uiImage = UIImage(data: data) {
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 100, height: 100)
-                        .clipShape(Circle())
-                } else {
-                    Image(systemName: "photo.circle.fill")
-                        .resizable()
-                        .frame(width: 100, height: 100)
-                        .foregroundColor(Color(UIColor.systemGray4))
-                }
-                
-                Text(imageData == nil ? "Add Photo" : "Edit")
-                    .font(.caption)
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(Color(UIColor.secondarySystemFill))
-                    .foregroundColor(.primary)
-                    .clipShape(Capsule())
-            }
-        }
-    }
-}
-
 /// A highly customized stepper view optimized for fast, accurate inventory stock adjustments.
 @MainActor
 public struct ItemStockStepper<Field: Hashable>: View {
     @Binding public var stockCount: Int
     public var focusedField: FocusState<Field?>.Binding
     public var equals: Field
+    
+    public init(stockCount: Binding<Int>, focusedField: FocusState<Field?>.Binding, equals: Field) {
+        self._stockCount = stockCount
+        self.focusedField = focusedField
+        self.equals = equals
+    }
     
     public var body: some View {
         HStack {
@@ -275,6 +323,105 @@ public struct ItemStockStepper<Field: Hashable>: View {
                         .clipShape(Circle())
                 }
                 .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+// MARK: - Advanced Analytics UI Components
+
+public enum OrderFilterTab: String, CaseIterable, Identifiable {
+    case all = "All Time"
+    case year = "This Year"
+    case month = "This Month"
+    case week = "This Week"
+    public var id: String { self.rawValue }
+}
+
+/// A shared, fluid filter bar utilizing Apple's glassmorphism aesthetics and matched geometry effects.
+@MainActor
+public struct GlassSalesFilterView: View {
+    @Binding public var selectedTab: OrderFilterTab
+    @Binding public var searchText: String
+    
+    @Namespace private var animation
+    
+    public init(selectedTab: Binding<OrderFilterTab>, searchText: Binding<String>) {
+        self._selectedTab = selectedTab
+        self._searchText = searchText
+    }
+    
+    public var body: some View {
+        VStack(spacing: 16) {
+            // Search Bar
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                
+                TextField("Search name, date, amount...", text: $searchText)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.never)
+                    .submitLabel(.search)
+                
+                if !searchText.isEmpty {
+                    Button {
+                        withAnimation(.snappy) { searchText = "" }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.tertiary)
+                            .font(.system(size: 16))
+                    }
+                    .transition(.scale.combined(with: .opacity))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(Color.primary.opacity(0.05), lineWidth: 1)
+            )
+            .shadow(color: .black.opacity(0.03), radius: 5, x: 0, y: 2)
+            
+            // Fluid Tab Selector
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(OrderFilterTab.allCases) { tab in
+                        Button {
+                            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                                selectedTab = tab
+                            }
+                            let generator = UIImpactFeedbackGenerator(style: .light)
+                            generator.impactOccurred()
+                        } label: {
+                            Text(tab.rawValue)
+                                .font(.subheadline)
+                                .fontWeight(selectedTab == tab ? .bold : .medium)
+                                .foregroundStyle(selectedTab == tab ? Color(uiColor: .systemBackground) : .primary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                .background {
+                                    if selectedTab == tab {
+                                        Capsule()
+                                            .fill(Color.primary)
+                                            .matchedGeometryEffect(id: "TAB", in: animation)
+                                            .shadow(color: .black.opacity(0.15), radius: 4, x: 0, y: 2)
+                                    } else {
+                                        Capsule()
+                                            .fill(.ultraThinMaterial)
+                                            .overlay(
+                                                Capsule().stroke(Color.primary.opacity(0.05), lineWidth: 1)
+                                            )
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 2)
+                .padding(.vertical, 4)
             }
         }
     }

@@ -20,12 +20,50 @@ struct BackofficeItemDetailView: View {
     @State private var isShowingRestockAlert = false
     @State private var restockAmount = ""
     
+    @State private var selectedTab: OrderFilterTab = .all
+    @State private var orderSearchText = ""
+    
     /// Filters the global transaction array for any entries containing this specific item.
     var itemTransactions: [Transaction] {
         let itemIdString = item.id.uuidString
         return allTransactions.filter { transaction in
             (transaction.lineItems ?? []).contains { $0.itemID == itemIdString }
         }
+    }
+    
+    var filteredTransactions: [Transaction] {
+        var txs = itemTransactions
+        let now = Date()
+        let calendar = Calendar.current
+        
+        switch selectedTab {
+        case .week:
+            if let start = calendar.dateInterval(of: .weekOfYear, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .month:
+            if let start = calendar.dateInterval(of: .month, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .year:
+            if let start = calendar.dateInterval(of: .year, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .all:
+            break
+        }
+        
+        if !orderSearchText.isEmpty {
+            txs = txs.filter { tx in
+                let matchAmount = tx.totalAmount.formatted(.currency(code: "CAD")).contains(orderSearchText)
+                let matchDate = tx.date.formatted(date: .abbreviated, time: .shortened).contains(orderSearchText)
+                let matchCustomer = tx.customer?.fullName.localizedCaseInsensitiveContains(orderSearchText) ?? false
+                let matchWalkIn = "Walk-in".localizedCaseInsensitiveContains(orderSearchText) && tx.customer == nil
+                return matchAmount || matchDate || matchCustomer || matchWalkIn
+            }
+        }
+        
+        return txs.sorted(by: { $0.date > $1.date })
     }
     
     var lifetimeUnitsSold: Int {
@@ -51,7 +89,7 @@ struct BackofficeItemDetailView: View {
             headerSection
             statusSection
             performanceSection
-            transactionLogSection
+            salesHistorySection
         }
         .navigationTitle("Item Details")
         .navigationBarTitleDisplayMode(.inline)
@@ -189,60 +227,85 @@ struct BackofficeItemDetailView: View {
         }
     }
     
-    private var transactionLogSection: some View {
-        Section(header: Text("Transaction Log")) {
-            if itemTransactions.isEmpty {
+    private var salesHistorySection: some View {
+        Section(header: Text("Sales History")) {
+            GlassSalesFilterView(selectedTab: $selectedTab, searchText: $orderSearchText)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 16, trailing: 0))
+                .listRowSeparator(.hidden)
+            
+            if filteredTransactions.isEmpty {
                 Text("No sales data available.")
                     .italic()
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(itemTransactions) { transaction in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
-                                .font(.caption)
-                                .fontWeight(.medium)
-                            Spacer()
-                            Text(transaction.totalAmount, format: .currency(code: "CAD"))
-                                .font(.subheadline)
-                                .fontWeight(.bold)
+                ForEach(filteredTransactions) { transaction in
+                    transactionCard(for: transaction)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            Button {
+                                shareReceipt(for: transaction)
+                            } label: {
+                                Label("Receipt", systemImage: "square.and.arrow.up")
+                            }
+                            .tint(.blue)
                         }
-                        
-                        HStack {
-                            let matchingLineItems = (transaction.lineItems ?? []).filter { $0.itemID == item.id.uuidString }
-                            let totalQty = matchingLineItems.reduce(0) { $0 + $1.quantity }
-                            let methods = Set((transaction.payments ?? []).map { $0.method }).joined(separator: ", ")
-                            
-                            Text("\(totalQty) unit(s) • \(methods)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                            Spacer()
-                            Text(transaction.customer?.fullName ?? "Walk-in")
-                                .font(.caption2)
-                                .foregroundStyle(.blue)
-                        }
-                    }
-                    .padding(.vertical, 2)
-                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                        Button {
-                            shareReceipt(for: transaction)
-                        } label: {
-                            Label("Receipt", systemImage: "square.and.arrow.up")
-                        }
-                        .tint(.blue)
-                    }
                 }
             }
         }
+    }
+    
+    private func transactionCard(for transaction: Transaction) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let customer = transaction.customer {
+                        Text(customer.fullName)
+                            .font(.headline)
+                            .foregroundStyle(.blue)
+                    } else if let buyerName = transaction.buyerEmployeeName {
+                        Text(buyerName)
+                            .font(.headline)
+                            .foregroundStyle(.purple)
+                    } else {
+                        Text("Walk-in Customer")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                    }
+                    
+                    Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(transaction.totalAmount, format: .currency(code: "CAD"))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    
+                    let matchingLineItems = (transaction.lineItems ?? []).filter { $0.itemID == item.id.uuidString }
+                    let totalQty = matchingLineItems.reduce(0) { $0 + $1.quantity }
+                    
+                    Text("\(totalQty) unit(s)")
+                        .font(.caption2)
+                        .fontWeight(.medium)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.1))
+                        .foregroundStyle(Color.accentColor)
+                        .clipShape(Capsule())
+                }
+            }
+        }
+        .padding(.vertical, 4)
     }
     
     // MARK: - Export
     
     @MainActor
     private func shareReceipt(for transaction: Transaction) {
-        // Fixed incorrect argument label to 'for:'
         guard let url = ReceiptRenderer.generatePDF(for: transaction) else { return }
-        
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         
         if let windowScene = UIApplication.shared.connectedScenes.first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene,

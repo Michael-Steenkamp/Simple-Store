@@ -8,7 +8,7 @@ import SwiftData
 
 // MARK: - View Model
 
-/// Manages form state, validation, and multi-tenant data ingestion for new customers.
+/// Manages form state, validation, and local data ingestion for new customers.
 @MainActor
 @Observable
 final class AddCustomerViewModel {
@@ -19,6 +19,10 @@ final class AddCustomerViewModel {
     var notes = ""
     var selectedStatus: CustomerStatus?
     
+    var createAuthAccount = false
+    var isProcessing = false
+    var errorMessage = ""
+    
     var isEmailValid: Bool {
         if email.trimmingCharacters(in: .whitespaces).isEmpty { return true }
         let emailRegex = /^[A-Z0-9a-z._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,64}$/
@@ -26,10 +30,14 @@ final class AddCustomerViewModel {
     }
     
     var isFormValid: Bool {
-        !firstName.trimmingCharacters(in: .whitespaces).isEmpty && isEmailValid
+        let hasName = !firstName.trimmingCharacters(in: .whitespaces).isEmpty
+        if createAuthAccount {
+            let hasEmail = !email.trimmingCharacters(in: .whitespaces).isEmpty
+            return hasName && isEmailValid && hasEmail
+        }
+        return hasName && isEmailValid
     }
     
-    /// Provisions a new customer and syncs it to the remote workspace.
     func saveCustomer(
         context: ModelContext,
         session: SessionManager,
@@ -37,16 +45,46 @@ final class AddCustomerViewModel {
     ) async -> Customer? {
         guard isFormValid else { return nil }
         
+        isProcessing = true
+        errorMessage = ""
+        defer { isProcessing = false }
+        
         let cleanedPhone = phone.formattedAsPhoneNumber
-        // Safely unwrap activeStoreId, falling back to an empty string or default workspace identifier if unassigned
         let storeId = session.currentUser?.activeStoreId ?? ""
+        let cleanedEmail = email.trimmingCharacters(in: .whitespaces).lowercased()
+        let cleanedFirstName = firstName.trimmingCharacters(in: .whitespaces)
+        let cleanedLastName = lastName.trimmingCharacters(in: .whitespaces)
+        
+        // 1. Prevent CRM duplicates before generating tokens or local records.
+        if !cleanedEmail.isEmpty {
+            let emailExists = await session.isEmailRegistered(email: cleanedEmail)
+            if emailExists {
+                errorMessage = "This email is already registered to another user in this store."
+                return nil
+            }
+        }
+        
+        if createAuthAccount {
+            do {
+                try await session.provisionSystemAccount(
+                    email: cleanedEmail,
+                    firstName: cleanedFirstName,
+                    lastName: cleanedLastName,
+                    phone: cleanedPhone,
+                    role: .customer
+                )
+            } catch {
+                errorMessage = "Failed to create login credentials. (\(error.localizedDescription))"
+                return nil
+            }
+        }
         
         let newCustomer = Customer(
             id: UUID(),
             storeId: storeId,
-            firstName: firstName.trimmingCharacters(in: .whitespaces),
-            lastName: lastName.trimmingCharacters(in: .whitespaces),
-            email: email.trimmingCharacters(in: .whitespaces),
+            firstName: cleanedFirstName,
+            lastName: cleanedLastName,
+            email: cleanedEmail,
             phone: cleanedPhone
         )
         
@@ -57,14 +95,13 @@ final class AddCustomerViewModel {
         context.insert(newCustomer)
         try? context.save()
         
-        await syncManager.pushCustomerToCloud(newCustomer)
+        syncManager.pushCustomerToCloud(newCustomer)
         return newCustomer
     }
 }
 
 // MARK: - View
 
-/// Provides the interface for provisioning new customers within the active tenant workspace.
 struct AddCustomerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -79,9 +116,18 @@ struct AddCustomerView: View {
     var body: some View {
         NavigationStack {
             Form {
+                if !viewModel.errorMessage.isEmpty {
+                    Section {
+                        Text(viewModel.errorMessage)
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
+                    }
+                }
+                
                 personalInfoSection
                 contactInfoSection
                 metadataSection
+                authProvisioningSection
             }
             .scrollDismissesKeyboard(.automatic)
             .navigationTitle("New Customer")
@@ -91,7 +137,7 @@ struct AddCustomerView: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
+                    Button {
                         Task {
                             if let customer = await viewModel.saveCustomer(
                                 context: modelContext,
@@ -102,9 +148,14 @@ struct AddCustomerView: View {
                                 dismiss()
                             }
                         }
+                    } label: {
+                        if viewModel.isProcessing {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Text("Save").fontWeight(.bold)
+                        }
                     }
-                    .fontWeight(.bold)
-                    .disabled(!viewModel.isFormValid)
+                    .disabled(!viewModel.isFormValid || viewModel.isProcessing)
                 }
             }
         }
@@ -131,7 +182,7 @@ struct AddCustomerView: View {
             HStack {
                 Image(systemName: "envelope")
                     .foregroundStyle(viewModel.isEmailValid ? .gray : .red)
-                TextField("name@example.com", text: $viewModel.email)
+                TextField(viewModel.createAuthAccount ? "name@example.com *" : "name@example.com", text: $viewModel.email)
                     .keyboardType(.emailAddress)
                     .textContentType(.emailAddress)
                     .autocorrectionDisabled()
@@ -163,6 +214,12 @@ struct AddCustomerView: View {
                 TextField("Add any special notes here...", text: $viewModel.notes, axis: .vertical)
                     .lineLimit(3...6)
             }
+        }
+    }
+    
+    private var authProvisioningSection: some View {
+        Section(footer: Text("If enabled, this customer will instantly be emailed a secure link to create a password and log into the app to view their receipts.")) {
+            Toggle("Create App Login", isOn: $viewModel.createAuthAccount.animation(.snappy))
         }
     }
 }

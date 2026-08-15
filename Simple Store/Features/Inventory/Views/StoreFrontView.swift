@@ -33,6 +33,7 @@ struct StorefrontView: View {
     
     @State private var isShowingUserProfile = false
     @State private var isShowingStoreInfo = false
+    @State private var isShowingDiscovery = false
     
     @State private var selectedProfileItem: StoreItem? = nil
     
@@ -222,8 +223,16 @@ struct StorefrontView: View {
                 .sheet(isPresented: $isShowingStoreInfo) {
                     CustomerStoreInfoView()
                 }
+                .fullScreenCover(isPresented: $isShowingDiscovery) {
+                    StoreSelectionView()
+                }
                 .onAppear {
                     logoData = UserDefaults.standard.data(forKey: "storeLogo")
+                }
+                .onChange(of: session.currentUser?.activeStoreId) { _, newStoreId in
+                    if newStoreId == nil {
+                        isShowingDiscovery = true
+                    }
                 }
                 .overlay(alignment: .leading) {
                     if isStaff {
@@ -285,10 +294,12 @@ struct StorefrontView: View {
                 UserDefaults.standard.set(data["storeWebsite"] as? String ?? "", forKey: "storeWebsite")
                 UserDefaults.standard.set(data["receiptReturnPolicy"] as? String ?? "", forKey: "receiptReturnPolicy")
                 
-                if let logoURLString = data["storeLogoURL"] as? String, let url = URL(string: logoURLString) {
-                    if let (imageData, _) = try? await URLSession.shared.data(from: url) {
-                        UserDefaults.standard.set(imageData, forKey: "storeLogo")
-                        self.logoData = imageData
+                if let logoURLString = data["storeLogoURL"] as? String, !logoURLString.isEmpty {
+                    if logoURLString != "OFFLINE_CACHE", let url = URL(string: logoURLString) {
+                        if let (imageData, _) = try? await URLSession.shared.data(from: url) {
+                            UserDefaults.standard.set(imageData, forKey: "storeLogo")
+                            self.logoData = imageData
+                        }
                     }
                 } else {
                     UserDefaults.standard.removeObject(forKey: "storeLogo")

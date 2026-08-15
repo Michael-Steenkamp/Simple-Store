@@ -11,7 +11,6 @@ public enum UserRole: String, Codable, Sendable {
     case admin
     case employee
     case customer
-    case guest
 }
 
 /// A representation of an authenticated user and their multi-tenant access control.
@@ -46,9 +45,6 @@ public struct AppUser: Codable, Identifiable, Sendable {
     /// The identifier of the currently active store workspace.
     public var activeStoreId: String?
     
-    /// The identifier of a store the user should automatically join upon authentication.
-    public var autoJoinStoreId: String?
-    
     public init(
         id: String? = nil,
         name: String,
@@ -57,8 +53,7 @@ public struct AppUser: Codable, Identifiable, Sendable {
         isSystemAdmin: Bool = false,
         storeIds: [String] = [],
         storeRoles: [String: String] = [:],
-        activeStoreId: String? = nil,
-        autoJoinStoreId: String? = nil
+        activeStoreId: String? = nil
     ) {
         self.id = id
         self.name = name
@@ -68,7 +63,6 @@ public struct AppUser: Codable, Identifiable, Sendable {
         self.storeIds = storeIds
         self.storeRoles = storeRoles
         self.activeStoreId = activeStoreId
-        self.autoJoinStoreId = autoJoinStoreId
     }
     
     // MARK: - Legacy Compatibility
@@ -80,17 +74,21 @@ public struct AppUser: Codable, Identifiable, Sendable {
     }
     
     /// A backward-compatible alias that resolves the user's role for the currently active store.
-    /// Returns `.guest` if no active store is set or if the role mapping is missing.
-    public var role: UserRole {
+    /// Returns `nil` if no active store is set or if the role mapping is missing.
+    public var role: UserRole? {
         get {
             guard let active = activeStoreId, let roleString = storeRoles[active] else {
-                return .guest
+                return nil
             }
-            return UserRole(rawValue: roleString) ?? .guest
+            return UserRole(rawValue: roleString)
         }
         set {
             if let active = activeStoreId {
-                storeRoles[active] = newValue.rawValue
+                if let newRole = newValue {
+                    storeRoles[active] = newRole.rawValue
+                } else {
+                    storeRoles.removeValue(forKey: active)
+                }
             }
         }
     }

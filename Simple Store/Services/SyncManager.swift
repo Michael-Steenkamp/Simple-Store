@@ -37,64 +37,148 @@ public final class SyncManager {
     /// The most recent synchronization error, if any.
     public var lastSyncError: String?
     
+    // Cold-Start synchronization flags to trigger ghost data reconciliation.
+    private var isInventoryFirstSync = true
+    private var isCustomersFirstSync = true
+    private var isEmployeesFirstSync = true
+    private var isTransactionsFirstSync = true
+    private var isTagsFirstSync = true
+    private var isStatusesFirstSync = true
+    
     // MARK: - Lifecycle Management
     
     public func startListening(storeId: String, context: ModelContext) {
-        if currentTrackedStoreId != storeId {
+        if let current = currentTrackedStoreId, current != storeId {
             clearLocalDatabase(context: context)
-            currentTrackedStoreId = storeId
         }
+        currentTrackedStoreId = storeId
         
         stopAllListeners()
         isSyncing = true
         
-        inventoryListener = db.collection("inventory")
-            .whereField("storeId", isEqualTo: storeId)
-            .addSnapshotListener { [weak self] snapshot, error in
-                self?.handleSnapshot(snapshot, error: error) { data in
-                    self?.processIncomingInventory(data: data, context: context)
-                }
+        // Reset cold-start flags upon initialization.
+        isInventoryFirstSync = true
+        isCustomersFirstSync = true
+        isEmployeesFirstSync = true
+        isTransactionsFirstSync = true
+        isTagsFirstSync = true
+        isStatusesFirstSync = true
+        
+        // 1. Inventory Sync
+        inventoryListener = db.collection("inventory").whereField("storeId", isEqualTo: storeId).addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            if let error = error { self.lastSyncError = "Sync error: \(error.localizedDescription)"; return }
+            guard let snapshot = snapshot else { return }
+            
+            if self.isInventoryFirstSync {
+                self.reconcileInventory(snapshot: snapshot, context: context)
+                self.isInventoryFirstSync = false
             }
             
-        customersListener = db.collection("customers")
-            .whereField("storeId", isEqualTo: storeId)
-            .addSnapshotListener { [weak self] snapshot, error in
-                self?.handleSnapshot(snapshot, error: error) { data in
-                    self?.processIncomingCustomer(data: data, context: context)
+            for change in snapshot.documentChanges {
+                switch change.type {
+                case .added, .modified: self.processIncomingInventory(data: change.document.data(), context: context)
+                case .removed: self.removeLocalInventory(id: change.document.documentID, context: context)
                 }
+            }
+        }
+        
+        // 2. Customers Sync
+        customersListener = db.collection("customers").whereField("storeId", isEqualTo: storeId).addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            if let error = error { self.lastSyncError = "Sync error: \(error.localizedDescription)"; return }
+            guard let snapshot = snapshot else { return }
+            
+            if self.isCustomersFirstSync {
+                self.reconcileCustomers(snapshot: snapshot, context: context)
+                self.isCustomersFirstSync = false
             }
             
-        employeesListener = db.collection("employees")
-            .whereField("storeId", isEqualTo: storeId)
-            .addSnapshotListener { [weak self] snapshot, error in
-                self?.handleSnapshot(snapshot, error: error) { data in
-                    self?.processIncomingEmployee(data: data, context: context)
+            for change in snapshot.documentChanges {
+                switch change.type {
+                case .added, .modified: self.processIncomingCustomer(data: change.document.data(), context: context)
+                case .removed: self.removeLocalCustomer(id: change.document.documentID, context: context)
                 }
+            }
+        }
+        
+        // 3. Employees Sync
+        employeesListener = db.collection("employees").whereField("storeId", isEqualTo: storeId).addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            if let error = error { self.lastSyncError = "Sync error: \(error.localizedDescription)"; return }
+            guard let snapshot = snapshot else { return }
+            
+            if self.isEmployeesFirstSync {
+                self.reconcileEmployees(snapshot: snapshot, context: context)
+                self.isEmployeesFirstSync = false
             }
             
-        transactionsListener = db.collection("transactions")
-            .whereField("storeId", isEqualTo: storeId)
-            .addSnapshotListener { [weak self] snapshot, error in
-                self?.handleSnapshot(snapshot, error: error) { data in
-                    self?.processIncomingTransaction(data: data, context: context)
+            for change in snapshot.documentChanges {
+                switch change.type {
+                case .added, .modified: self.processIncomingEmployee(data: change.document.data(), context: context)
+                case .removed: self.removeLocalEmployee(id: change.document.documentID, context: context)
                 }
+            }
+        }
+        
+        // 4. Transactions Sync
+        transactionsListener = db.collection("transactions").whereField("storeId", isEqualTo: storeId).addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            if let error = error { self.lastSyncError = "Sync error: \(error.localizedDescription)"; return }
+            guard let snapshot = snapshot else { return }
+            
+            if self.isTransactionsFirstSync {
+                self.reconcileTransactions(snapshot: snapshot, context: context)
+                self.isTransactionsFirstSync = false
             }
             
-        tagsListener = db.collection("tags")
-            .whereField("storeId", isEqualTo: storeId)
-            .addSnapshotListener { [weak self] snapshot, error in
-                self?.handleSnapshot(snapshot, error: error) { data in
-                    self?.processIncomingTag(data: data, context: context)
+            for change in snapshot.documentChanges {
+                switch change.type {
+                case .added, .modified: self.processIncomingTransaction(data: change.document.data(), context: context)
+                case .removed: self.removeLocalTransaction(id: change.document.documentID, context: context)
                 }
+            }
+        }
+        
+        // 5. Tags Sync
+        tagsListener = db.collection("tags").whereField("storeId", isEqualTo: storeId).addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            if let error = error { self.lastSyncError = "Sync error: \(error.localizedDescription)"; return }
+            guard let snapshot = snapshot else { return }
+            
+            if self.isTagsFirstSync {
+                self.reconcileTags(snapshot: snapshot, context: context)
+                self.isTagsFirstSync = false
             }
             
-        statusesListener = db.collection("customerStatuses")
-            .whereField("storeId", isEqualTo: storeId)
-            .addSnapshotListener { [weak self] snapshot, error in
-                self?.handleSnapshot(snapshot, error: error) { data in
-                    self?.processIncomingCustomerStatus(data: data, context: context)
+            for change in snapshot.documentChanges {
+                switch change.type {
+                case .added, .modified: self.processIncomingTag(data: change.document.data(), context: context)
+                case .removed: self.removeLocalTag(id: change.document.documentID, context: context)
                 }
             }
+        }
+        
+        // 6. Customer Statuses Sync
+        statusesListener = db.collection("customerStatuses").whereField("storeId", isEqualTo: storeId).addSnapshotListener { [weak self] snapshot, error in
+            guard let self = self else { return }
+            if let error = error { self.lastSyncError = "Sync error: \(error.localizedDescription)"; return }
+            guard let snapshot = snapshot else { return }
+            
+            if self.isStatusesFirstSync {
+                self.reconcileCustomerStatuses(snapshot: snapshot, context: context)
+                self.isStatusesFirstSync = false
+            }
+            
+            for change in snapshot.documentChanges {
+                switch change.type {
+                case .added, .modified: self.processIncomingCustomerStatus(data: change.document.data(), context: context)
+                case .removed: self.removeLocalCustomerStatus(id: change.document.documentID, context: context)
+                }
+            }
+        }
+        
+        isSyncing = false
     }
     
     public func stopAllListeners() {
@@ -107,22 +191,90 @@ public final class SyncManager {
         isSyncing = false
     }
     
-    // MARK: - Utilities
+    // MARK: - Ghost Data Reconciliation (Cold-Start)
     
-    private func handleSnapshot(_ snapshot: QuerySnapshot?, error: Error?, processor: ([String: Any]) -> Void) {
-        if let error = error {
-            self.lastSyncError = "Sync error: \(error.localizedDescription)"
-            self.isSyncing = false
-            return
-        }
-        
-        guard let snapshot = snapshot else { return }
-        
-        for document in snapshot.documents {
-            processor(document.data())
-        }
-        self.isSyncing = false
+    /// Compares the initial remote payload with local storage to purge orphaned offline records.
+    private func reconcileInventory(snapshot: QuerySnapshot, context: ModelContext) {
+        let remoteIds = Set(snapshot.documents.map { $0.documentID })
+        let items = try? context.fetch(FetchDescriptor<StoreItem>())
+        items?.forEach { if !remoteIds.contains($0.id.uuidString) { context.delete($0) } }
+        try? context.save()
     }
+    
+    private func reconcileCustomers(snapshot: QuerySnapshot, context: ModelContext) {
+        let remoteIds = Set(snapshot.documents.map { $0.documentID })
+        let items = try? context.fetch(FetchDescriptor<Customer>())
+        items?.forEach { if !remoteIds.contains($0.id.uuidString) { context.delete($0) } }
+        try? context.save()
+    }
+    
+    private func reconcileEmployees(snapshot: QuerySnapshot, context: ModelContext) {
+        let remoteIds = Set(snapshot.documents.map { $0.documentID })
+        let items = try? context.fetch(FetchDescriptor<Employee>())
+        items?.forEach { if !remoteIds.contains($0.id.uuidString) { context.delete($0) } }
+        try? context.save()
+    }
+    
+    private func reconcileTransactions(snapshot: QuerySnapshot, context: ModelContext) {
+        let remoteIds = Set(snapshot.documents.map { $0.documentID })
+        let items = try? context.fetch(FetchDescriptor<Transaction>())
+        items?.forEach { if !remoteIds.contains($0.id.uuidString) { context.delete($0) } }
+        try? context.save()
+    }
+    
+    private func reconcileTags(snapshot: QuerySnapshot, context: ModelContext) {
+        let remoteIds = Set(snapshot.documents.map { $0.documentID })
+        let items = try? context.fetch(FetchDescriptor<ItemTag>())
+        items?.forEach { if !remoteIds.contains($0.id.uuidString) { context.delete($0) } }
+        try? context.save()
+    }
+    
+    private func reconcileCustomerStatuses(snapshot: QuerySnapshot, context: ModelContext) {
+        let remoteIds = Set(snapshot.documents.map { $0.documentID })
+        let items = try? context.fetch(FetchDescriptor<CustomerStatus>())
+        items?.forEach { if !remoteIds.contains($0.id.uuidString) { context.delete($0) } }
+        try? context.save()
+    }
+    
+    // MARK: - Incremental Data Deletion (Real-Time)
+    
+    private func removeLocalInventory(id: String, context: ModelContext) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let descriptor = FetchDescriptor<StoreItem>(predicate: #Predicate { $0.id == uuid })
+        if let item = try? context.fetch(descriptor).first { context.delete(item); try? context.save() }
+    }
+    
+    private func removeLocalCustomer(id: String, context: ModelContext) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let descriptor = FetchDescriptor<Customer>(predicate: #Predicate { $0.id == uuid })
+        if let item = try? context.fetch(descriptor).first { context.delete(item); try? context.save() }
+    }
+    
+    private func removeLocalEmployee(id: String, context: ModelContext) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let descriptor = FetchDescriptor<Employee>(predicate: #Predicate { $0.id == uuid })
+        if let item = try? context.fetch(descriptor).first { context.delete(item); try? context.save() }
+    }
+    
+    private func removeLocalTransaction(id: String, context: ModelContext) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let descriptor = FetchDescriptor<Transaction>(predicate: #Predicate { $0.id == uuid })
+        if let item = try? context.fetch(descriptor).first { context.delete(item); try? context.save() }
+    }
+    
+    private func removeLocalTag(id: String, context: ModelContext) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let descriptor = FetchDescriptor<ItemTag>(predicate: #Predicate { $0.id == uuid })
+        if let item = try? context.fetch(descriptor).first { context.delete(item); try? context.save() }
+    }
+    
+    private func removeLocalCustomerStatus(id: String, context: ModelContext) {
+        guard let uuid = UUID(uuidString: id) else { return }
+        let descriptor = FetchDescriptor<CustomerStatus>(predicate: #Predicate { $0.id == uuid })
+        if let item = try? context.fetch(descriptor).first { context.delete(item); try? context.save() }
+    }
+    
+    // MARK: - Utilities
     
     private func clearLocalDatabase(context: ModelContext) {
         do {
@@ -163,6 +315,7 @@ public final class SyncManager {
                 existingItem.salesPrice = salesPrice
                 existingItem.isActive = isActive
                 existingItem.updatedAt = Date()
+                existingItem.imageURL = data["imageURL"] as? String
             } else {
                 let newItem = StoreItem(
                     id: id,
@@ -170,7 +323,8 @@ public final class SyncManager {
                     name: name,
                     stockCount: stockCount,
                     salesPrice: salesPrice,
-                    isActive: isActive
+                    isActive: isActive,
+                    imageURL: data["imageURL"] as? String
                 )
                 context.insert(newItem)
             }
@@ -226,12 +380,16 @@ public final class SyncManager {
         do {
             if let existing = try context.fetch(descriptor).first {
                 existing.name = name
+                existing.email = data["email"] as? String
+                existing.phone = data["phone"] as? String
                 existing.isActive = data["isActive"] as? Bool ?? true
             } else {
                 let newEmployee = Employee(
                     id: id,
                     storeId: storeId,
                     name: name,
+                    email: data["email"] as? String,
+                    phone: data["phone"] as? String,
                     isActive: data["isActive"] as? Bool ?? true
                 )
                 context.insert(newEmployee)
@@ -347,8 +505,8 @@ public final class SyncManager {
     
     // MARK: - Outgoing Data Pushers (Local -> Cloud)
     
-    public func pushItemToCloud(_ item: StoreItem) async {
-        let data: [String: Any] = [
+    public func pushItemToCloud(_ item: StoreItem) {
+        var data: [String: Any] = [
             "id": item.id.uuidString,
             "storeId": item.storeId,
             "name": item.name,
@@ -359,10 +517,19 @@ public final class SyncManager {
             "barcode": item.barcode ?? "",
             "isActive": item.isActive
         ]
-        try? await db.collection("inventory").document(item.id.uuidString).setData(data, merge: true)
+        
+        if let url = item.imageURL, url != "OFFLINE_CACHE" {
+            data["imageURL"] = url
+        }
+        
+        db.collection("inventory").document(item.id.uuidString).setData(data, merge: true)
     }
     
-    public func pushTransactionToCloud(_ transaction: Transaction) async {
+    public func deleteItemFromCloud(_ itemId: String) async {
+        try? await db.collection("inventory").document(itemId).delete()
+    }
+    
+    public func pushTransactionToCloud(_ transaction: Transaction) {
         let lineItemsData = (transaction.lineItems ?? []).map { li in
             ["id": li.id.uuidString, "itemName": li.itemName, "itemID": li.itemID, "quantity": li.quantity, "pricePerUnit": li.pricePerUnit]
         }
@@ -384,10 +551,10 @@ public final class SyncManager {
             "lineItems": lineItemsData,
             "payments": paymentsData
         ]
-        try? await db.collection("transactions").document(transaction.id.uuidString).setData(data)
+        db.collection("transactions").document(transaction.id.uuidString).setData(data)
     }
     
-    public func pushCustomerToCloud(_ customer: Customer) async {
+    public func pushCustomerToCloud(_ customer: Customer) {
         let data: [String: Any] = [
             "id": customer.id.uuidString,
             "storeId": customer.storeId,
@@ -399,60 +566,57 @@ public final class SyncManager {
             "isActive": customer.isActive,
             "updatedAt": customer.updatedAt
         ]
-        try? await db.collection("customers").document(customer.id.uuidString).setData(data, merge: true)
+        db.collection("customers").document(customer.id.uuidString).setData(data, merge: true)
     }
     
-    public func pushEmployeeToCloud(_ employee: Employee) async {
-        let data: [String: Any] = [
+    public func pushEmployeeToCloud(_ employee: Employee) {
+        var data: [String: Any] = [
             "id": employee.id.uuidString,
             "storeId": employee.storeId,
             "name": employee.name,
             "isActive": employee.isActive
         ]
-        try? await db.collection("employees").document(employee.id.uuidString).setData(data, merge: true)
+        if let email = employee.email { data["email"] = email }
+        if let phone = employee.phone { data["phone"] = phone }
+        
+        db.collection("employees").document(employee.id.uuidString).setData(data, merge: true)
     }
     
-    // MARK: - Transaction & Customer Deletions
-    
-    public func deleteTransactionFromCloud(_ transactionId: String) async {
-        try? await db.collection("transactions").document(transactionId).delete()
+    public func deleteTransactionFromCloud(_ transactionId: String) {
+        db.collection("transactions").document(transactionId).delete()
     }
     
-    public func deleteCustomerFromCloud(_ customerId: String) async {
-        try? await db.collection("customers").document(customerId).delete()
+    public func deleteCustomerFromCloud(_ customerId: String) {
+        db.collection("customers").document(customerId).delete()
     }
     
-    // MARK: - Tag & Status Management
-    
-    public func pushItemTagToCloud(_ tag: ItemTag) async {
+    public func pushItemTagToCloud(_ tag: ItemTag) {
         let data: [String: Any] = [
             "id": tag.id.uuidString,
             "storeId": tag.storeId,
             "name": tag.name
         ]
-        try? await db.collection("tags").document(tag.id.uuidString).setData(data, merge: true)
+        db.collection("tags").document(tag.id.uuidString).setData(data, merge: true)
     }
     
-    public func deleteItemTagFromCloud(_ tagId: String) async {
-        try? await db.collection("tags").document(tagId).delete()
+    public func deleteItemTagFromCloud(_ tagId: String) {
+        db.collection("tags").document(tagId).delete()
     }
     
-    public func pushCustomerStatusToCloud(_ status: CustomerStatus) async {
+    public func pushCustomerStatusToCloud(_ status: CustomerStatus) {
         let data: [String: Any] = [
             "id": status.id.uuidString,
             "storeId": status.storeId,
             "name": status.name
         ]
-        try? await db.collection("customerStatuses").document(status.id.uuidString).setData(data, merge: true)
+        db.collection("customerStatuses").document(status.id.uuidString).setData(data, merge: true)
     }
     
-    public func deleteCustomerStatusFromCloud(_ statusId: String) async {
-        try? await db.collection("customerStatuses").document(statusId).delete()
+    public func deleteCustomerStatusFromCloud(_ statusId: String) {
+        db.collection("customerStatuses").document(statusId).delete()
     }
     
-    // MARK: - Store Profile Syncing
-    
-    public func pushStoreProfileToCloud(storeId: String, payload: [String: Any]) async {
-        try? await db.collection("stores").document(storeId).setData(payload, merge: true)
+    public func pushStoreProfileToCloud(storeId: String, payload: [String: Any]) {
+        db.collection("stores").document(storeId).setData(payload, merge: true)
     }
 }

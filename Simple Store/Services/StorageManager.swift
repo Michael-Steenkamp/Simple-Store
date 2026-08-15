@@ -23,7 +23,12 @@ public final class StorageManager: Sendable {
     // MARK: - Initialization
     
     private init() {
-        self.storageRef = Storage.storage().reference()
+        let storage = Storage.storage()
+        // Enforces a strict 10-second timeout.
+        // This ensures the application fails-fast during offline operations, immediately triggering local caching fallbacks.
+        storage.maxUploadRetryTime = 10.0
+        storage.maxOperationRetryTime = 10.0
+        self.storageRef = storage.reference()
     }
     
     // MARK: - Store Logo Operations

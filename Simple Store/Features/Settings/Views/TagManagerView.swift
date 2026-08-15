@@ -39,13 +39,13 @@ final class TagManagerViewModel {
                 let newTag = ItemTag(id: UUID(), storeId: storeId, name: trimmedName)
                 context.insert(newTag)
                 if isSelectionMode { selectedTags.wrappedValue.append(newTag) }
-                Task { await syncManager.pushItemTagToCloud(newTag) }
+                syncManager.pushItemTagToCloud(newTag)
             }
         } else {
             if !allStatuses.contains(where: { $0.name.lowercased() == trimmedName.lowercased() }) {
                 let newStatus = CustomerStatus(id: UUID(), name: trimmedName, storeId: storeId)
                 context.insert(newStatus)
-                Task { await syncManager.pushCustomerStatusToCloud(newStatus) }
+                syncManager.pushCustomerStatusToCloud(newStatus)
             }
         }
         
@@ -67,7 +67,7 @@ final class TagManagerViewModel {
         }
         
         let tagId = tag.id.uuidString
-        Task { await syncManager.deleteItemTagFromCloud(tagId) }
+        syncManager.deleteItemTagFromCloud(tagId)
         
         context.delete(tag)
         try? context.save()
@@ -76,7 +76,7 @@ final class TagManagerViewModel {
     
     func deleteStatus(_ status: CustomerStatus, context: ModelContext, syncManager: SyncManager) {
         let statusId = status.id.uuidString
-        Task { await syncManager.deleteCustomerStatusFromCloud(statusId) }
+        syncManager.deleteCustomerStatusFromCloud(statusId)
         
         context.delete(status)
         try? context.save()

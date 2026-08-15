@@ -26,20 +26,17 @@ struct LaunchRouterView: View {
             // MARK: - Main Application Content
             if let user = session.currentUser {
                 if user.activeStoreId == nil {
-                    // Route to tenant onboarding or tenant selection based on existing affiliations
                     if user.storeIds.isEmpty {
-                        StoreSelectionView()
+                        StoreSelectionView(isPresentedModally: false)
                     } else {
                         MyStoresView(isPresentedFromProfile: false)
                     }
                 } else {
-                    // Route directly into the active multi-tenant workspace
                     StorefrontView()
                         .id(user.activeStoreId)
                         .transition(.opacity)
                 }
             } else {
-                // Route to authentication if no valid session exists
                 AuthenticationView()
             }
             
@@ -50,7 +47,6 @@ struct LaunchRouterView: View {
                     .transition(.opacity)
             }
         }
-        // Triggers a smooth crossfade whenever the active workspace context changes.
         .animation(.easeInOut(duration: 0.4), value: session.currentUser?.activeStoreId)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(session.isLoading || showSplash ? "Loading Application" : "Simple Store Application")
@@ -58,7 +54,10 @@ struct LaunchRouterView: View {
             // Initial App Launch Sequence
             try? await Task.sleep(for: .seconds(1.5))
             
+            // Enforce a strict 3-second timeout to prevent the splash screen from hanging indefinitely during offline boots.
+            let startTime = Date()
             while session.isLoading {
+                if Date().timeIntervalSince(startTime) > 3.0 { break }
                 try? await Task.sleep(for: .milliseconds(100))
             }
             

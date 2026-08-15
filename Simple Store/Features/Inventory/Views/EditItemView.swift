@@ -40,7 +40,7 @@ final class EditItemViewModel {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && Double(salesPriceString) != nil
     }
     
-    func saveChanges(context: ModelContext, session: SessionManager, syncManager: SyncManager) async {
+    func saveChanges(context: ModelContext, session: SessionManager, syncManager: SyncManager) {
         let finalPrice = Double(salesPriceString) ?? 0.0
         let finalCost = Double(itemCostString) ?? 0.0
         
@@ -56,50 +56,75 @@ final class EditItemViewModel {
         
         try? context.save()
         
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+        
+        let itemId = item.id.uuidString
         if let storeId = session.currentUser?.activeStoreId {
             if let data = imageData {
-                if let url = try? await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: item.id.uuidString) {
-                    item.imageURL = url
+                Task {
+                    let uploadedURL = await Task.detached {
+                        do {
+                            return try await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: itemId)
+                        } catch {
+                            return "OFFLINE_CACHE"
+                        }
+                    }.value
+                    
+                    item.imageURL = uploadedURL
                     try? context.save()
+                    syncManager.pushItemToCloud(item)
                 }
+                return
             } else {
-                await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: item.id.uuidString)
+                Task { await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: itemId) }
                 item.imageURL = nil
                 try? context.save()
             }
         }
         
-        await syncManager.pushItemToCloud(item)
-        
-        let generator = UIImpactFeedbackGenerator(style: .medium)
-        generator.impactOccurred()
+        syncManager.pushItemToCloud(item)
     }
     
-    func archiveItem(context: ModelContext, syncManager: SyncManager, cartManager: CartManager) async {
+    func archiveItem(context: ModelContext, syncManager: SyncManager, cartManager: CartManager) {
         item.isActive = false
         item.updatedAt = Date()
         cartManager.items.removeValue(forKey: item)
         try? context.save()
-        await syncManager.pushItemToCloud(item)
+        syncManager.pushItemToCloud(item)
     }
     
-    func permanentlyDeleteItem(context: ModelContext, session: SessionManager, syncManager: SyncManager, cartManager: CartManager) async {
-        item.name = item.name + " (Deleted)"
-        item.imageData = nil
-        item.imageURL = nil
-        item.tags = []
-        item.barcode = nil
-        item.desc = nil
-        item.isActive = false
-        item.updatedAt = Date()
-        
+    /// Evaluates transaction history to selectively execute a hard database deletion or a referential soft-delete.
+    func permanentlyDeleteItem(hasHistory: Bool, context: ModelContext, session: SessionManager, syncManager: SyncManager, cartManager: CartManager) {
+        let itemIdString = item.id.uuidString
         cartManager.items.removeValue(forKey: item)
-        try? context.save()
         
-        if let storeId = session.currentUser?.activeStoreId {
-            await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: item.id.uuidString)
+        if hasHistory {
+            item.name = item.name + " (Deleted)"
+            item.imageData = nil
+            item.imageURL = nil
+            item.tags = []
+            item.barcode = nil
+            item.desc = nil
+            item.isActive = false
+            item.updatedAt = Date()
+            
+            try? context.save()
+            
+            if let storeId = session.currentUser?.activeStoreId {
+                Task { await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: itemIdString) }
+            }
+            syncManager.pushItemToCloud(item)
+            
+        } else {
+            context.delete(item)
+            try? context.save()
+            
+            if let storeId = session.currentUser?.activeStoreId {
+                Task { await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: itemIdString) }
+            }
+            Task { await syncManager.deleteItemFromCloud(itemIdString) }
         }
-        await syncManager.pushItemToCloud(item)
     }
 }
 
@@ -113,6 +138,7 @@ struct EditItemView: View {
     @Environment(SyncManager.self) private var syncManager
     @Environment(SessionManager.self) private var session
     
+    @Query private var allTransactions: [Transaction]
     @State private var viewModel: EditItemViewModel
     
     @State private var isShowingTagManager = false
@@ -139,6 +165,14 @@ struct EditItemView: View {
         cartManager.items.keys.contains(where: { $0.id == viewModel.item.id })
     }
     
+    /// Identifies whether the active item possesses transactional history to regulate the hard deletion constraints.
+    var hasTransactionalHistory: Bool {
+        let itemIdString = viewModel.item.id.uuidString
+        return allTransactions.contains { transaction in
+            transaction.lineItems?.contains { $0.itemID == itemIdString } == true
+        }
+    }
+    
     var body: some View {
         Form {
             photoSection
@@ -149,10 +183,8 @@ struct EditItemView: View {
             Section {
                 if viewModel.item.isActive {
                     Button(role: .confirm) {
-                        Task {
-                            await viewModel.saveChanges(context: modelContext, session: session, syncManager: syncManager)
-                            dismiss()
-                        }
+                        viewModel.saveChanges(context: modelContext, session: session, syncManager: syncManager)
+                        dismiss()
                     } label: {
                         Text("Save Changes")
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -188,11 +220,9 @@ struct EditItemView: View {
         .alert("Archive Item", isPresented: $isShowingDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
             Button(isInCart ? "Archive & Remove" : "Archive", role: .destructive) {
-                Task {
-                    await viewModel.archiveItem(context: modelContext, syncManager: syncManager, cartManager: cartManager)
-                    dismiss()
-                    onDelete?()
-                }
+                viewModel.archiveItem(context: modelContext, syncManager: syncManager, cartManager: cartManager)
+                dismiss()
+                onDelete?()
             }
         } message: {
             if isInCart {
@@ -204,17 +234,15 @@ struct EditItemView: View {
         .alert("Permanently Delete", isPresented: $isShowingHardDeleteConfirm) {
             Button("Cancel", role: .cancel) { }
             Button(isInCart ? "Delete & Remove" : "Delete", role: .destructive) {
-                Task {
-                    await viewModel.permanentlyDeleteItem(context: modelContext, session: session, syncManager: syncManager, cartManager: cartManager)
-                    dismiss()
-                    onDelete?()
-                }
+                viewModel.permanentlyDeleteItem(hasHistory: hasTransactionalHistory, context: modelContext, session: session, syncManager: syncManager, cartManager: cartManager)
+                dismiss()
+                onDelete?()
             }
         } message: {
             if isInCart {
                 Text("This item is in your cart. Permanently deleting it will strip its metadata and remove it from the cart. Continue?")
             } else {
-                Text("WARNING: This will permanently strip the metadata of \(viewModel.item.name) and remove it from the system. Transaction records will be preserved.")
+                Text("WARNING: This will permanently delete \(viewModel.item.name) from the system.")
             }
         }
     }
@@ -386,10 +414,8 @@ struct EditItemView: View {
                 }
             } else {
                 Button {
-                    Task {
-                        viewModel.item.isActive = true
-                        await viewModel.saveChanges(context: modelContext, session: session, syncManager: syncManager)
-                    }
+                    viewModel.item.isActive = true
+                    viewModel.saveChanges(context: modelContext, session: session, syncManager: syncManager)
                 } label: {
                     Text("Restore to Storefront")
                         .frame(maxWidth: .infinity, alignment: .center)

@@ -9,6 +9,7 @@ import SwiftData
 /// Displays a list of soft-deleted customers and provides administrative data restoration or permanent anonymization capabilities.
 struct ArchivedCustomersView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(SyncManager.self) private var syncManager
     @Query(sort: \Customer.lastName) private var allCustomers: [Customer]
     
     /// Filters out customers that have been permanently anonymized/scrubbed.
@@ -83,17 +84,34 @@ struct ArchivedCustomersView: View {
         customer.isActive = true
         customer.updatedAt = Date()
         try? modelContext.save()
+        syncManager.pushCustomerToCloud(customer)
     }
     
-    /// Scrubs personally identifiable information (PII) to anonymize the record while preserving relational transaction history.
+    /// Intelligently purges the customer record.
+    /// If no transactions exist, the entity is hard-deleted from all databases.
+    /// If transactions exist, PII is scrubbed to preserve the financial ledger.
     private func permanentlyDelete(_ customer: Customer) {
-        customer.firstName = "Deleted"
-        customer.lastName = "Customer"
-        customer.email = ""
-        customer.phone = ""
-        customer.notes = ""
-        customer.status = nil
-        customer.isActive = false
-        try? modelContext.save()
+        let hasTransactions = !(customer.transactions ?? []).isEmpty
+        
+        if hasTransactions {
+            // Anonymize to preserve ledger
+            customer.firstName = "Deleted"
+            customer.lastName = "Customer"
+            customer.email = ""
+            customer.phone = ""
+            customer.notes = ""
+            customer.status = nil
+            customer.isActive = false
+            customer.updatedAt = Date()
+            
+            try? modelContext.save()
+            syncManager.pushCustomerToCloud(customer)
+        } else {
+            // Safe to completely hard-delete
+            let customerId = customer.id.uuidString
+            modelContext.delete(customer)
+            try? modelContext.save()
+            syncManager.deleteCustomerFromCloud(customerId)
+        }
     }
 }

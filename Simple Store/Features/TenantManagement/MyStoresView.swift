@@ -48,17 +48,10 @@ final class MyStoresViewModel {
     
     /// Orchestrates the natural UI dismissal sequence before swapping the active database context.
     func executeHandoff(to storeId: String, session: SessionManager, isPresentedFromProfile: Bool, dismissAction: DismissAction) async {
-        // 1. Trigger the database swap. This instantly prepares the Frosted Glass loading screen underneath.
         await session.switchActiveStore(to: storeId)
-        
-        // 2. Wait a fraction of a second so the user sees the card's loading spinner acknowledge their tap.
         try? await Task.sleep(for: .milliseconds(300))
-        
-        // 3. Reset state and dismiss the sheet to elegantly reveal the new Storefront.
         processingStoreId = nil
-        if isPresentedFromProfile {
-            dismissAction()
-        }
+        if isPresentedFromProfile { dismissAction() }
     }
 }
 
@@ -73,6 +66,18 @@ struct MyStoresView: View {
     @State private var viewModel = MyStoresViewModel()
     
     let columns = [GridItem(.flexible()), GridItem(.flexible())]
+    
+    private var isStoreOwner: Bool {
+        session.currentUser?.storeRoles.values.contains(UserRole.admin.rawValue) == true
+    }
+    
+    private var ownedStores: [PublicStore] {
+        viewModel.myStores.filter { session.currentUser?.storeRoles[$0.id] == UserRole.admin.rawValue }
+    }
+    
+    private var joinedStores: [PublicStore] {
+        viewModel.myStores.filter { session.currentUser?.storeRoles[$0.id] != UserRole.admin.rawValue }
+    }
     
     var body: some View {
         NavigationStack {
@@ -90,10 +95,10 @@ struct MyStoresView: View {
                 }
             }
             .fullScreenCover(isPresented: $viewModel.isShowingDiscovery, onDismiss: { Task { await viewModel.fetchMyStores(session: session) } }) {
-                StoreSelectionView()
+                StoreSelectionView(isPresentedModally: true)
             }
-            .fullScreenCover(isPresented: $viewModel.isCreatingStore, onDismiss: { Task { await viewModel.fetchMyStores(session: session) } }) {
-                StoreSetupWizardView()
+            .navigationDestination(isPresented: $viewModel.isCreatingStore) {
+                StoreSetupWizardView(isPresentedInSheet: false)
             }
             .alert(item: $viewModel.storeToLeave) { store in
                 Alert(
@@ -118,7 +123,7 @@ struct MyStoresView: View {
     
     private var headerSection: some View {
         VStack(spacing: 8) {
-            Text("Your Workspaces")
+            Text("Your Stores")
                 .font(.largeTitle)
                 .fontWeight(.bold)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -135,62 +140,97 @@ struct MyStoresView: View {
     private var gridSection: some View {
         if viewModel.isLoading {
             Spacer()
-            ProgressView("Loading workspaces...")
+            ProgressView("Loading stores...")
             Spacer()
         } else if viewModel.myStores.isEmpty {
             Spacer()
             ContentUnavailableView(
                 "No Stores Joined",
                 systemImage: "storefront",
-                description: Text("You haven't joined any workspaces yet.")
+                description: Text("You haven't joined any stores yet.")
             )
             Spacer()
         } else {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 16) {
-                    ForEach(viewModel.myStores) { store in
-                        MyStoreCard(
-                            store: store,
-                            role: session.currentUser?.storeRoles[store.id] ?? "guest",
-                            isAutoJoin: session.currentUser?.autoJoinStoreId == store.id,
-                            isActiveStore: session.currentUser?.activeStoreId == store.id,
-                            isProcessing: viewModel.processingStoreId == store.id
-                        ) {
-                            Task {
-                                withAnimation { viewModel.processingStoreId = store.id }
-                                await viewModel.executeHandoff(to: store.id, session: session, isPresentedFromProfile: isPresentedFromProfile, dismissAction: dismiss)
-                            }
-                        } menuActions: {
-                            Button {
-                                Task {
-                                    withAnimation { viewModel.processingStoreId = store.id }
-                                    await viewModel.executeHandoff(to: store.id, session: session, isPresentedFromProfile: isPresentedFromProfile, dismissAction: dismiss)
+                if !ownedStores.isEmpty {
+                    VStack(alignment: .leading) {
+                        Text("Owned Store")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+                        
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(ownedStores) { store in
+                                MyStoreCard(
+                                    store: store,
+                                    role: "Admin",
+                                    isActiveStore: session.currentUser?.activeStoreId == store.id,
+                                    isProcessing: viewModel.processingStoreId == store.id
+                                ) {
+                                    Task {
+                                        withAnimation { viewModel.processingStoreId = store.id }
+                                        await viewModel.executeHandoff(to: store.id, session: session, isPresentedFromProfile: isPresentedFromProfile, dismissAction: dismiss)
+                                    }
+                                } menuActions: {
+                                    Button {
+                                        Task {
+                                            withAnimation { viewModel.processingStoreId = store.id }
+                                            await viewModel.executeHandoff(to: store.id, session: session, isPresentedFromProfile: isPresentedFromProfile, dismissAction: dismiss)
+                                        }
+                                    } label: {
+                                        Label("Enter Store", systemImage: "arrow.right.circle")
+                                    }
                                 }
-                            } label: {
-                                Label("Enter Workspace", systemImage: "arrow.right.circle")
-                            }
-                            
-                            Button {
-                                Task { await session.toggleAutoJoin(storeId: store.id) }
-                            } label: {
-                                if session.currentUser?.autoJoinStoreId == store.id {
-                                    Label("Remove Auto-Join", systemImage: "star.slash")
-                                } else {
-                                    Label("Set as Auto-Join", systemImage: "star.fill")
-                                }
-                            }
-                            Divider()
-                            Button(role: .destructive) {
-                                viewModel.storeToLeave = store
-                            } label: {
-                                Label("Leave Store", systemImage: "rectangle.portrait.and.arrow.right")
                             }
                         }
+                        .padding(.horizontal)
+                        
+                        Divider().padding(.vertical, 16)
                     }
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 20)
+                
+                if !joinedStores.isEmpty {
+                    VStack(alignment: .leading) {
+                        Text("Joined Stores")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+                        
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(joinedStores) { store in
+                                MyStoreCard(
+                                    store: store,
+                                    role: session.currentUser?.storeRoles[store.id] ?? "Browsing",
+                                    isActiveStore: session.currentUser?.activeStoreId == store.id,
+                                    isProcessing: viewModel.processingStoreId == store.id
+                                ) {
+                                    Task {
+                                        withAnimation { viewModel.processingStoreId = store.id }
+                                        await viewModel.executeHandoff(to: store.id, session: session, isPresentedFromProfile: isPresentedFromProfile, dismissAction: dismiss)
+                                    }
+                                } menuActions: {
+                                    Button {
+                                        Task {
+                                            withAnimation { viewModel.processingStoreId = store.id }
+                                            await viewModel.executeHandoff(to: store.id, session: session, isPresentedFromProfile: isPresentedFromProfile, dismissAction: dismiss)
+                                        }
+                                    } label: {
+                                        Label("Enter Store", systemImage: "arrow.right.circle")
+                                    }
+                                    Divider()
+                                    Button(role: .destructive) {
+                                        viewModel.storeToLeave = store
+                                    } label: {
+                                        Label("Leave Store", systemImage: "rectangle.portrait.and.arrow.right")
+                                    }
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                }
             }
+            .padding(.bottom, 20)
         }
     }
     
@@ -213,15 +253,17 @@ struct MyStoresView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
             }
             
-            Button {
-                viewModel.isCreatingStore = true
-            } label: {
-                Text("Create Your Own Store")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .foregroundStyle(Color.accentColor)
+            if !isStoreOwner {
+                Button {
+                    viewModel.isCreatingStore = true
+                } label: {
+                    Text("Create Your Own Store")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .foregroundStyle(Color.accentColor)
+                }
+                .padding(.bottom, 8)
             }
-            .padding(.bottom, 8)
         }
         .padding()
         .background(Color(uiColor: .systemBackground))
@@ -233,7 +275,6 @@ struct MyStoresView: View {
 struct MyStoreCard<MenuContent: View>: View {
     let store: PublicStore
     let role: String
-    let isAutoJoin: Bool
     let isActiveStore: Bool
     let isProcessing: Bool
     let onEnter: () -> Void
@@ -273,18 +314,13 @@ struct MyStoreCard<MenuContent: View>: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                     
-                    HStack(spacing: 4) {
-                        if isAutoJoin {
-                            Image(systemName: "star.fill").foregroundStyle(.yellow)
-                        }
-                        Text(role.capitalized)
-                    }
-                    .font(.caption2)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Color.accentColor.opacity(0.1))
-                    .foregroundStyle(Color.accentColor)
-                    .clipShape(Capsule())
+                    Text(role.capitalized)
+                        .font(.caption2)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Color.accentColor.opacity(0.1))
+                        .foregroundStyle(Color.accentColor)
+                        .clipShape(Capsule())
                 }
             }
             .padding()

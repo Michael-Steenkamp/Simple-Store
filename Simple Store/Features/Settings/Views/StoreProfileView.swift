@@ -11,7 +11,6 @@ import PhotosUI
 @MainActor
 @Observable
 final class StoreProfileViewModel {
-    var isSyncingProfile = false
     
     func syncProfileToCloud(
         storeId: String,
@@ -28,17 +27,41 @@ final class StoreProfileViewModel {
         showEmployeeOnReceipt: Bool,
         logoData: Data?,
         syncManager: SyncManager
-    ) async {
-        isSyncingProfile = true
-        defer { isSyncingProfile = false }
-        
+    ) {
         var storeLogoURL = ""
         if let logoData {
-            if let url = try? await StorageManager.shared.uploadStoreLogo(data: logoData, storeId: storeId) {
-                storeLogoURL = url
+            Task {
+                if let url = try? await StorageManager.shared.uploadStoreLogo(data: logoData, storeId: storeId) {
+                    storeLogoURL = url
+                } else {
+                    storeLogoURL = "OFFLINE_CACHE"
+                }
+                pushPayload(storeLogoURL: storeLogoURL, storeId: storeId, storeName: storeName, storeEmail: storeEmail, storePhone: storePhone, storeAddress: storeAddress, storeWebsite: storeWebsite, receiptThankYou: receiptThankYou, receiptReturnPolicy: receiptReturnPolicy, showLogoOnReceipt: showLogoOnReceipt, showAddressOnReceipt: showAddressOnReceipt, showWebsiteOnReceipt: showWebsiteOnReceipt, showEmployeeOnReceipt: showEmployeeOnReceipt, syncManager: syncManager)
             }
+        } else {
+            pushPayload(storeLogoURL: storeLogoURL, storeId: storeId, storeName: storeName, storeEmail: storeEmail, storePhone: storePhone, storeAddress: storeAddress, storeWebsite: storeWebsite, receiptThankYou: receiptThankYou, receiptReturnPolicy: receiptReturnPolicy, showLogoOnReceipt: showLogoOnReceipt, showAddressOnReceipt: showAddressOnReceipt, showWebsiteOnReceipt: showWebsiteOnReceipt, showEmployeeOnReceipt: showEmployeeOnReceipt, syncManager: syncManager)
         }
         
+        let generator = UINotificationFeedbackGenerator()
+        generator.notificationOccurred(.success)
+    }
+    
+    private func pushPayload(
+        storeLogoURL: String,
+        storeId: String,
+        storeName: String,
+        storeEmail: String,
+        storePhone: String,
+        storeAddress: String,
+        storeWebsite: String,
+        receiptThankYou: String,
+        receiptReturnPolicy: String,
+        showLogoOnReceipt: Bool,
+        showAddressOnReceipt: Bool,
+        showWebsiteOnReceipt: Bool,
+        showEmployeeOnReceipt: Bool,
+        syncManager: SyncManager
+    ) {
         let payload: [String: Any] = [
             "storeName": storeName,
             "storeEmail": storeEmail,
@@ -54,10 +77,7 @@ final class StoreProfileViewModel {
             "storeLogoURL": storeLogoURL
         ]
         
-        await syncManager.pushStoreProfileToCloud(storeId: storeId, payload: payload)
-        
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(.success)
+        syncManager.pushStoreProfileToCloud(storeId: storeId, payload: payload)
     }
 }
 
@@ -85,7 +105,7 @@ struct StoreProfileView: View {
     
     // MARK: - UI State
     @State private var viewModel = StoreProfileViewModel()
-    @State private var logoData: Data? = UserDefaults.standard.data(forKey: "storeLogo")
+    @State private var logoData: Data? = nil
     @State private var isShowingPhotoOptions = false
     @State private var isShowingImagePicker = false
     @State private var imageSource: UIImagePickerController.SourceType = .photoLibrary
@@ -109,35 +129,36 @@ struct StoreProfileView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .confirmationAction) {
-                Button {
-                    guard let storeId = session.currentUser?.activeStoreId else { return }
-                    Task {
-                        await viewModel.syncProfileToCloud(
-                            storeId: storeId,
-                            storeName: storeName,
-                            storeEmail: storeEmail,
-                            storePhone: storePhone,
-                            storeAddress: storeAddress,
-                            storeWebsite: storeWebsite,
-                            receiptThankYou: receiptThankYou,
-                            receiptReturnPolicy: receiptReturnPolicy,
-                            showLogoOnReceipt: showLogoOnReceipt,
-                            showAddressOnReceipt: showAddressOnReceipt,
-                            showWebsiteOnReceipt: showWebsiteOnReceipt,
-                            showEmployeeOnReceipt: showEmployeeOnReceipt,
-                            logoData: logoData,
-                            syncManager: syncManager
-                        )
+                Button("Done") {
+                    guard let storeId = session.currentUser?.activeStoreId else {
                         dismiss()
+                        return
                     }
-                } label: {
-                    if viewModel.isSyncingProfile {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Text("Save to Cloud").fontWeight(.bold)
-                    }
+                    viewModel.syncProfileToCloud(
+                        storeId: storeId,
+                        storeName: storeName,
+                        storeEmail: storeEmail,
+                        storePhone: storePhone,
+                        storeAddress: storeAddress,
+                        storeWebsite: storeWebsite,
+                        receiptThankYou: receiptThankYou,
+                        receiptReturnPolicy: receiptReturnPolicy,
+                        showLogoOnReceipt: showLogoOnReceipt,
+                        showAddressOnReceipt: showAddressOnReceipt,
+                        showWebsiteOnReceipt: showWebsiteOnReceipt,
+                        showEmployeeOnReceipt: showEmployeeOnReceipt,
+                        logoData: logoData,
+                        syncManager: syncManager
+                    )
+                    dismiss()
                 }
-                .disabled(!isEmailValid || storeName.trimmingCharacters(in: .whitespaces).isEmpty || viewModel.isSyncingProfile)
+                .fontWeight(.bold)
+                .disabled(!isEmailValid || storeName.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .onAppear {
+            if let cachedLogo = UserDefaults.standard.data(forKey: "storeLogo") {
+                logoData = cachedLogo
             }
         }
         .onChange(of: isPhoneFocused) { _, isFocused in

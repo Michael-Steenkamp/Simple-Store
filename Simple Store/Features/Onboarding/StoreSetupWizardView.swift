@@ -8,7 +8,6 @@ import PhotosUI
 
 // MARK: - View Model
 
-/// Manages form state, input validation, and Firebase provisioning for new multi-tenant workspaces.
 @MainActor
 @Observable
 final class StoreSetupWizardViewModel {
@@ -16,9 +15,16 @@ final class StoreSetupWizardViewModel {
     var storeEmail: String = ""
     var storePhone: String = ""
     var storeAddress: String = ""
+    var storeWebsite: String = ""
+    
+    var receiptThankYou: String = ""
+    var receiptReturnPolicy: String = ""
+    var showLogoOnReceipt: Bool = true
+    var showAddressOnReceipt: Bool = true
+    var showWebsiteOnReceipt: Bool = true
+    var showEmployeeOnReceipt: Bool = true
     
     var logoData: Data? = nil
-    
     var isProcessing = false
     var errorMessage = ""
     
@@ -26,14 +32,11 @@ final class StoreSetupWizardViewModel {
         !storeName.trimmingCharacters(in: .whitespaces).isEmpty
     }
     
-    /// Executes the workspace creation sequence and binds the user as the primary administrator.
     func createStore(session: SessionManager) async -> Bool {
         isProcessing = true
         errorMessage = ""
         
-        defer {
-            isProcessing = false
-        }
+        defer { isProcessing = false }
         
         do {
             try await session.createStore(
@@ -41,6 +44,13 @@ final class StoreSetupWizardViewModel {
                 storeEmail: storeEmail.trimmingCharacters(in: .whitespaces),
                 storePhone: storePhone,
                 storeAddress: storeAddress.trimmingCharacters(in: .whitespaces),
+                storeWebsite: storeWebsite.trimmingCharacters(in: .whitespaces),
+                receiptThankYou: receiptThankYou,
+                receiptReturnPolicy: receiptReturnPolicy,
+                showLogoOnReceipt: showLogoOnReceipt,
+                showAddressOnReceipt: showAddressOnReceipt,
+                showWebsiteOnReceipt: showWebsiteOnReceipt,
+                showEmployeeOnReceipt: showEmployeeOnReceipt,
                 logoData: logoData
             )
             
@@ -53,7 +63,6 @@ final class StoreSetupWizardViewModel {
         }
     }
     
-    /// Sanitizes and structures the phone number input when the field loses focus.
     func formatPhoneInput() {
         storePhone = storePhone.formattedAsPhoneNumber
     }
@@ -66,6 +75,9 @@ struct StoreSetupWizardView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(SessionManager.self) private var session
     
+    /// Regulates the visibility of the cancellation controls to prevent redundant top-navigation elements.
+    var isPresentedInSheet: Bool = true
+    
     @State private var viewModel = StoreSetupWizardViewModel()
     
     @State private var isShowingPhotoOptions = false
@@ -75,55 +87,65 @@ struct StoreSetupWizardView: View {
     @FocusState private var isPhoneFocused: Bool
     
     var body: some View {
-        NavigationStack {
-            Form {
-                if !viewModel.errorMessage.isEmpty {
-                    Section {
-                        Text(viewModel.errorMessage)
-                            .font(.subheadline)
-                            .foregroundStyle(.red)
-                    }
+        Form {
+            if !viewModel.errorMessage.isEmpty {
+                Section {
+                    Text(viewModel.errorMessage)
+                        .font(.subheadline)
+                        .foregroundStyle(.red)
                 }
-                
-                logoAndNameSection
-                contactInformationSection
-                actionSection
             }
-            .navigationTitle("New Store")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
+            
+            brandSection
+            contactSection
+            receiptConfigurationSection
+            receiptVisibilitySection
+        }
+        .navigationTitle("New Store")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if isPresentedInSheet {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .onChange(of: isPhoneFocused) { _, isFocused in
-                if !isFocused {
-                    viewModel.formatPhoneInput()
+            ToolbarItem(placement: .confirmationAction) {
+                Button {
+                    Task {
+                        let success = await viewModel.createStore(session: session)
+                        if success { dismiss() }
+                    }
+                } label: {
+                    if viewModel.isProcessing {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text("Create").fontWeight(.bold)
+                    }
                 }
+                .disabled(!viewModel.isFormValid || viewModel.isProcessing)
             }
-            .confirmationDialog("Add Logo", isPresented: $isShowingPhotoOptions, titleVisibility: .visible) {
-                Button("Take Photo") { imageSource = .camera; isShowingImagePicker = true }
-                Button("Choose from Library") { imageSource = .photoLibrary; isShowingImagePicker = true }
-                if viewModel.logoData != nil { Button("Remove Logo", role: .destructive) { viewModel.logoData = nil } }
-                Button("Cancel", role: .cancel) { }
+        }
+        .onChange(of: isPhoneFocused) { _, isFocused in
+            if !isFocused {
+                viewModel.formatPhoneInput()
             }
-            .fullScreenCover(isPresented: $isShowingImagePicker) {
-                ImagePicker(sourceType: imageSource, selectedImage: $viewModel.logoData).ignoresSafeArea()
-            }
+        }
+        .confirmationDialog("Add Logo", isPresented: $isShowingPhotoOptions, titleVisibility: .visible) {
+            Button("Take Photo") { imageSource = .camera; isShowingImagePicker = true }
+            Button("Choose from Library") { imageSource = .photoLibrary; isShowingImagePicker = true }
+            if viewModel.logoData != nil { Button("Remove Logo", role: .destructive) { viewModel.logoData = nil } }
+            Button("Cancel", role: .cancel) { }
+        }
+        .fullScreenCover(isPresented: $isShowingImagePicker) {
+            ImagePicker(sourceType: imageSource, selectedImage: $viewModel.logoData).ignoresSafeArea()
         }
     }
     
     // MARK: - Subviews
     
-    private var logoAndNameSection: some View {
+    private var brandSection: some View {
         Section {
             VStack(spacing: 16) {
-                Text("Let's get your store set up.")
-                    .font(.title3)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 8)
-                
                 Button {
                     isShowingPhotoOptions = true
                 } label: {
@@ -136,17 +158,13 @@ struct StoreSetupWizardView: View {
                                 .clipShape(Circle())
                                 .shadow(color: .black.opacity(0.1), radius: 5, y: 2)
                         } else {
-                            ZStack {
-                                Circle()
-                                    .fill(Color(uiColor: .secondarySystemBackground))
-                                    .frame(width: 100, height: 100)
-                                Image(systemName: "camera.macro")
-                                    .font(.system(size: 30))
-                                    .foregroundStyle(Color(uiColor: .systemGray3))
-                            }
+                            Image(systemName: "storefront.circle.fill")
+                                .resizable()
+                                .frame(width: 100, height: 100)
+                                .foregroundStyle(Color(uiColor: .systemGray4))
                         }
                         
-                        Text(viewModel.logoData == nil ? "Add Logo (Optional)" : "Change Logo")
+                        Text(viewModel.logoData == nil ? "Add Logo" : "Edit Logo")
                             .font(.caption)
                             .fontWeight(.semibold)
                             .padding(.horizontal, 12)
@@ -157,9 +175,9 @@ struct StoreSetupWizardView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .padding(.vertical, 10)
+                .padding(.top, 10)
                 
-                TextField("Store Name (Required)", text: $viewModel.storeName)
+                TextField("Simple Store Name", text: $viewModel.storeName)
                     .font(.title2)
                     .fontWeight(.bold)
                     .multilineTextAlignment(.center)
@@ -169,8 +187,8 @@ struct StoreSetupWizardView: View {
         }
     }
     
-    private var contactInformationSection: some View {
-        Section(header: Text("Contact Information (Optional)")) {
+    private var contactSection: some View {
+        Section(header: Text("Store Information (Optional)")) {
             HStack {
                 Image(systemName: "envelope")
                     .foregroundStyle(.gray)
@@ -201,32 +219,49 @@ struct StoreSetupWizardView: View {
                     .lineLimit(2...4)
                     .textContentType(.fullStreetAddress)
             }
+            
+            HStack {
+                Image(systemName: "link")
+                    .foregroundStyle(.gray)
+                    .frame(width: 24)
+                TextField("Website URL", text: $viewModel.storeWebsite)
+                    .keyboardType(.URL)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+            }
         }
     }
     
-    private var actionSection: some View {
-        Section {
-            Button {
-                Task {
-                    let success = await viewModel.createStore(session: session)
-                    if success { dismiss() }
-                }
-            } label: {
-                HStack {
-                    if viewModel.isProcessing {
-                        ProgressView().controlSize(.small).tint(.white)
-                    } else {
-                        Text("Create Store")
-                            .font(.headline)
-                            .fontWeight(.bold)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 8)
-                .foregroundStyle(.white)
+    private var receiptConfigurationSection: some View {
+        Section(
+            header: Text("Custom Messaging"),
+            footer: Text("This text will appear at the top and bottom of your generated PDF receipts.")
+        ) {
+            VStack(alignment: .leading) {
+                Text("Header Message")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("e.g. Thank you for your business!", text: $viewModel.receiptThankYou, axis: .vertical)
             }
-            .listRowBackground(viewModel.isFormValid && !viewModel.isProcessing ? Color.accentColor : Color.gray.opacity(0.5))
-            .disabled(!viewModel.isFormValid || viewModel.isProcessing)
+            
+            VStack(alignment: .leading) {
+                Text("Footer / Policy")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("e.g. No returns on opened items.", text: $viewModel.receiptReturnPolicy, axis: .vertical)
+            }
+        }
+    }
+    
+    private var receiptVisibilitySection: some View {
+        Section(
+            header: Text("Layout & Visibility"),
+            footer: Text("Toggle which parts of your Store Profile are included on the receipt.")
+        ) {
+            Toggle("Show Store Logo", isOn: $viewModel.showLogoOnReceipt)
+            Toggle("Show Physical Address", isOn: $viewModel.showAddressOnReceipt)
+            Toggle("Show Website Link", isOn: $viewModel.showWebsiteOnReceipt)
+            Toggle("Show \"Served By\" Name", isOn: $viewModel.showEmployeeOnReceipt)
         }
     }
 }

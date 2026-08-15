@@ -17,7 +17,7 @@ final class OrderListViewModel {
     var transactionToRevert: Transaction?
     var isShowingRevertAlert = false
     
-    func revertTransaction(transaction: Transaction, allItems: [StoreItem], context: ModelContext, syncManager: SyncManager) async {
+    func revertTransaction(transaction: Transaction, allItems: [StoreItem], context: ModelContext, syncManager: SyncManager) {
         var restoredItems: [StoreItem] = []
         
         if let lineItems = transaction.lineItems {
@@ -33,9 +33,9 @@ final class OrderListViewModel {
         context.delete(transaction)
         try? context.save()
         
-        await syncManager.deleteTransactionFromCloud(txId)
+        syncManager.deleteTransactionFromCloud(txId)
         for item in restoredItems {
-            await syncManager.pushItemToCloud(item)
+            syncManager.pushItemToCloud(item)
         }
     }
     
@@ -44,7 +44,6 @@ final class OrderListViewModel {
             UIPasteboard.general.string = email
         }
         
-        // Corrected ReceiptRenderer argument label to 'for:'
         guard let url = ReceiptRenderer.generatePDF(for: transaction) else { return }
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         
@@ -147,7 +146,7 @@ struct OrderListView: View {
         .alert("Revert Order", isPresented: $viewModel.isShowingRevertAlert, presenting: viewModel.transactionToRevert) { transaction in
             Button("Cancel", role: .cancel) { }
             Button("Revert Order", role: .destructive) {
-                Task { await viewModel.revertTransaction(transaction: transaction, allItems: allItems, context: modelContext, syncManager: syncManager) }
+                viewModel.revertTransaction(transaction: transaction, allItems: allItems, context: modelContext, syncManager: syncManager)
             }
         } message: { transaction in
             Text("Are you sure you want to revert this order? This will permanently delete the transaction and return the purchased items to your active stock.")

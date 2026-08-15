@@ -28,7 +28,7 @@ final class InventoryManagerViewModel {
                 item.updatedAt = Date()
                 try? context.save()
             }
-            Task { await syncManager.pushItemToCloud(item) }
+            syncManager.pushItemToCloud(item)
         }
     }
     
@@ -40,7 +40,7 @@ final class InventoryManagerViewModel {
             cartManager.items.removeValue(forKey: item)
             try? context.save()
         }
-        Task { await syncManager.pushItemToCloud(item) }
+        syncManager.pushItemToCloud(item)
     }
 }
 
@@ -190,11 +190,14 @@ struct InventoryRowView: View {
 struct ArchivedInventoryView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(CartManager.self) private var cartManager
+    @Environment(SessionManager.self) private var session
     @Environment(SyncManager.self) private var syncManager
     
     @Query(sort: \StoreItem.name) private var allItems: [StoreItem]
+    @Query private var allTransactions: [Transaction]
     
     @State private var isShowingDeleteAlert = false
+    @State private var isShowingDeleteAllAlert = false
     @State private var itemToDeleteAlert: StoreItem? = nil
     
     var archivedItems: [StoreItem] {
@@ -234,13 +237,33 @@ struct ArchivedInventoryView: View {
         }
         .navigationTitle("Archived Inventory")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if !archivedItems.isEmpty {
+                ToolbarItem(placement: .primaryAction) {
+                    Button("Delete All") {
+                        isShowingDeleteAllAlert = true
+                    }
+                    .foregroundStyle(.red)
+                }
+            }
+        }
         .alert("Permanently Delete", isPresented: $isShowingDeleteAlert, presenting: itemToDeleteAlert) { item in
             Button("Cancel", role: .cancel) { }
             Button("Delete", role: .destructive) {
                 withAnimation { permanentlyDelete(item) }
             }
         } message: { item in
-            Text("Are you sure you want to permanently delete \(item.name)? This will strip its metadata. Transaction records will be preserved.")
+            Text("Are you sure you want to permanently delete \(item.name)?")
+        }
+        .alert("Delete All Archives?", isPresented: $isShowingDeleteAllAlert) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete All", role: .destructive) {
+                for item in archivedItems {
+                    permanentlyDelete(item)
+                }
+            }
+        } message: {
+            Text("This action will scan your entire archive. Items without transaction history will be completely erased. Items with history will be soft-deleted.")
         }
     }
     
@@ -250,19 +273,42 @@ struct ArchivedInventoryView: View {
             item.updatedAt = Date()
             try? modelContext.save()
         }
-        Task { await syncManager.pushItemToCloud(item) }
+        syncManager.pushItemToCloud(item)
     }
     
+    /// Evaluates transaction history to selectively execute a hard database deletion or a referential soft-delete.
     private func permanentlyDelete(_ item: StoreItem) {
-        item.name = item.name + " (Deleted)"
-        item.imageData = nil
-        item.tags = []
-        item.barcode = nil
-        item.desc = nil
-        item.isActive = false
+        let itemIdString = item.id.uuidString
+        let hasHistory = allTransactions.contains { transaction in
+            transaction.lineItems?.contains { $0.itemID == itemIdString } == true
+        }
         
         cartManager.items.removeValue(forKey: item)
-        try? modelContext.save()
-        Task { await syncManager.pushItemToCloud(item) }
+        
+        if hasHistory {
+            item.name = item.name + " (Deleted)"
+            item.imageData = nil
+            item.tags = []
+            item.barcode = nil
+            item.desc = nil
+            item.isActive = false
+            item.updatedAt = Date()
+            
+            try? modelContext.save()
+            
+            if let storeId = session.currentUser?.activeStoreId {
+                Task { await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: itemIdString) }
+            }
+            syncManager.pushItemToCloud(item)
+            
+        } else {
+            modelContext.delete(item)
+            try? modelContext.save()
+            
+            if let storeId = session.currentUser?.activeStoreId {
+                Task { await StorageManager.shared.deleteItemImage(storeId: storeId, itemId: itemIdString) }
+            }
+            Task { await syncManager.deleteItemFromCloud(itemIdString) }
+        }
     }
 }

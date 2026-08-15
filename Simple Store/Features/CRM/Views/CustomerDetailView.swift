@@ -16,12 +16,45 @@ struct CustomerDetailView: View {
     @Query private var allItems: [StoreItem]
     @State private var isShowingEditSheet = false
     
-    var sortedTransactions: [Transaction] {
-        customer.transactions?.sorted(by: { $0.date > $1.date }) ?? []
+    @State private var selectedTab: OrderFilterTab = .all
+    @State private var orderSearchText = ""
+    
+    var filteredTransactions: [Transaction] {
+        var txs = customer.transactions ?? []
+        let now = Date()
+        let calendar = Calendar.current
+        
+        switch selectedTab {
+        case .week:
+            if let start = calendar.dateInterval(of: .weekOfYear, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .month:
+            if let start = calendar.dateInterval(of: .month, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .year:
+            if let start = calendar.dateInterval(of: .year, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .all:
+            break
+        }
+        
+        if !orderSearchText.isEmpty {
+            txs = txs.filter { tx in
+                let matchAmount = tx.totalAmount.formatted(.currency(code: "CAD")).contains(orderSearchText)
+                let matchDate = tx.date.formatted(date: .abbreviated, time: .shortened).contains(orderSearchText)
+                let matchItem = tx.lineItems?.contains { $0.itemName.localizedCaseInsensitiveContains(orderSearchText) } ?? false
+                return matchAmount || matchDate || matchItem
+            }
+        }
+        
+        return txs.sorted(by: { $0.date > $1.date })
     }
     
     var totalLifetimeValue: Double {
-        sortedTransactions.reduce(0) { $0 + $1.totalAmount }
+        filteredTransactions.reduce(0) { $0 + $1.totalAmount }
     }
     
     var body: some View {
@@ -104,13 +137,18 @@ struct CustomerDetailView: View {
     }
     
     private var orderHistorySection: some View {
-        Section("Order History") {
-            if sortedTransactions.isEmpty {
-                Text("No past purchases.")
+        Section(header: Text("Order History")) {
+            GlassSalesFilterView(selectedTab: $selectedTab, searchText: $orderSearchText)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 8, leading: 0, bottom: 16, trailing: 0))
+                .listRowSeparator(.hidden)
+            
+            if filteredTransactions.isEmpty {
+                Text("No orders match this criteria.")
                     .foregroundStyle(.secondary)
                     .italic()
             } else {
-                ForEach(sortedTransactions) { transaction in
+                ForEach(filteredTransactions) { transaction in
                     NavigationLink(destination: TransactionDetailView(transaction: transaction)) {
                         transactionCard(for: transaction)
                     }
@@ -131,77 +169,57 @@ struct CustomerDetailView: View {
     
     private func transactionCard(for transaction: Transaction) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
-                    .font(.subheadline)
-                    .fontWeight(.bold)
-                Spacer()
-                Text(transaction.totalAmount, format: .currency(code: "CAD"))
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-            }
-            
-            Divider()
-            
-            if let items = transaction.lineItems {
-                ForEach(items) { lineItem in
-                    lineItemRow(lineItem)
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    
+                    let itemCount = transaction.lineItems?.reduce(0) { $0 + $1.quantity } ?? 0
+                    Text("\(itemCount) items")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
                 }
-            }
-            
-            if let payments = transaction.payments, !payments.isEmpty {
-                HStack {
-                    Text("Paid via:")
-                        .font(.caption)
-                        .foregroundStyle(.gray)
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(transaction.totalAmount, format: .currency(code: "CAD"))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
                     
-                    let methods = Set(payments.map { $0.method }).joined(separator: ", ")
-                    Text(methods)
-                        .font(.caption2)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.primary.opacity(0.1))
-                        .clipShape(Capsule())
-                        
-                    Spacer()
-                    
-                    if let employee = transaction.employeeName {
-                        Text("by \(employee)")
+                    if let payments = transaction.payments {
+                        let methods = Set(payments.map { $0.method }).joined(separator: ", ")
+                        Text(methods)
                             .font(.caption2)
-                            .foregroundStyle(.gray)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.primary.opacity(0.06))
+                            .clipShape(Capsule())
                     }
                 }
-                .padding(.top, 4)
+            }
+            
+            if let employee = transaction.employeeName {
+                HStack {
+                    Image(systemName: "person.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                    Text("Processed by \(employee)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, -4)
             }
         }
-        .padding(.vertical, 8)
-    }
-    
-    private func lineItemRow(_ lineItem: LineItem) -> some View {
-        HStack {
-            Text("\(lineItem.quantity)x")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .frame(width: 30, alignment: .leading)
-            
-            Text(lineItem.itemName)
-                .font(.subheadline)
-                .foregroundStyle(.primary)
-            
-            Spacer()
-            
-            Text((Double(lineItem.quantity) * lineItem.pricePerUnit), format: .currency(code: "CAD"))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
+        .padding(.vertical, 4)
     }
     
     // MARK: - Export
     
-    /// Presents a native system share sheet to distribute the transaction receipt.
     @MainActor
     private func shareReceipt(for transaction: Transaction) {
-        // Corrected argument label from 'from:' to 'for:'
         guard let url = ReceiptRenderer.generatePDF(for: transaction) else { return }
         let activityVC = UIActivityViewController(activityItems: [url], applicationActivities: nil)
         

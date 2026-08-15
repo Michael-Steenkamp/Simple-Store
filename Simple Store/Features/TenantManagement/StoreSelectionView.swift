@@ -91,14 +91,20 @@ struct StoreSelectionView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(SessionManager.self) private var session
     
+    /// Declares whether the view was presented modally, dynamically managing the visibility of cancellation controls.
+    var isPresentedModally: Bool = true
+    
     @State private var viewModel = StoreSelectionViewModel()
     
     let columns = [GridItem(.flexible()), GridItem(.flexible())]
     
+    private var isStoreOwner: Bool {
+        session.currentUser?.storeRoles.values.contains(UserRole.admin.rawValue) == true
+    }
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // MARK: - Search Header
                 VStack(spacing: 16) {
                     Text("Discover Stores")
                         .font(.largeTitle)
@@ -120,7 +126,6 @@ struct StoreSelectionView: View {
                 }
                 .padding()
                 
-                // MARK: - Store Grid
                 let visibleStores = viewModel.filteredStores(myStoreIds: session.currentUser?.storeIds ?? [])
                 
                 if viewModel.isLoadingStores {
@@ -150,29 +155,37 @@ struct StoreSelectionView: View {
                     }
                 }
                 
-                // MARK: - Footer
-                VStack {
-                    Divider()
-                    Button {
-                        viewModel.isCreatingStore = true
-                    } label: {
-                        HStack {
-                            Image(systemName: "plus.circle.fill")
-                            Text("Create Your Own Store")
+                if !isStoreOwner {
+                    VStack {
+                        Divider()
+                        Button {
+                            viewModel.isCreatingStore = true
+                        } label: {
+                            HStack {
+                                Image(systemName: "plus.circle.fill")
+                                Text("Create Your Own Store")
+                            }
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.accentColor)
+                            .foregroundStyle(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
                         }
-                        .font(.headline)
-                        .frame(maxWidth: .infinity)
                         .padding()
-                        .background(Color.accentColor)
-                        .foregroundStyle(.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
-                    .padding()
+                    .background(Color(uiColor: .systemBackground))
                 }
-                .background(Color(uiColor: .systemBackground))
+            }
+            .toolbar {
+                if isPresentedModally {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { dismiss() }
+                    }
+                }
             }
             .navigationDestination(isPresented: $viewModel.isCreatingStore) {
-                StoreSetupWizardView()
+                StoreSetupWizardView(isPresentedInSheet: false)
             }
             .sheet(item: $viewModel.selectedStorePreview) { store in
                 StorePreviewView(store: store) {

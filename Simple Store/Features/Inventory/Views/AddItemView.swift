@@ -27,12 +27,12 @@ final class AddItemViewModel {
         !name.trimmingCharacters(in: .whitespaces).isEmpty && Double(salesPriceString) != nil
     }
     
-    /// Provisions a new inventory item, uploads its photo to Storage, and syncs to Firestore.
+    /// Provisions a new inventory item locally and dispatches a detached background task for Firebase synchronization.
     func saveItem(
         context: ModelContext,
         session: SessionManager,
         syncManager: SyncManager
-    ) async {
+    ) {
         guard isFormValid else { return }
         
         let finalPrice = Double(salesPriceString) ?? 0.0
@@ -55,17 +55,28 @@ final class AddItemViewModel {
         context.insert(newItem)
         try? context.save()
         
-        if let data = imageData {
-            if let url = try? await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: newItem.id.uuidString) {
-                newItem.imageURL = url
-                try? context.save()
-            }
-        }
-        
-        await syncManager.pushItemToCloud(newItem)
-        
         let generator = UIImpactFeedbackGenerator(style: .medium)
         generator.impactOccurred()
+        
+        if let data = imageData {
+            let itemId = newItem.id.uuidString
+            
+            Task {
+                let uploadedURL = await Task.detached {
+                    do {
+                        return try await StorageManager.shared.uploadItemImage(data: data, storeId: storeId, itemId: itemId)
+                    } catch {
+                        return "OFFLINE_CACHE"
+                    }
+                }.value
+                
+                newItem.imageURL = uploadedURL
+                try? context.save()
+                syncManager.pushItemToCloud(newItem)
+            }
+        } else {
+            syncManager.pushItemToCloud(newItem)
+        }
     }
 }
 
@@ -104,11 +115,9 @@ struct AddItemView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        Task {
-                            await viewModel.saveItem(context: modelContext, session: session, syncManager: syncManager)
-                            dismiss()
-                        }
+                    Button("Create") {
+                        viewModel.saveItem(context: modelContext, session: session, syncManager: syncManager)
+                        dismiss()
                     }
                     .fontWeight(.bold)
                     .disabled(!viewModel.isFormValid)

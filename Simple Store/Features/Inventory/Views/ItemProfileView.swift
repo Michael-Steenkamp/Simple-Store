@@ -6,7 +6,7 @@
 import SwiftUI
 import SwiftData
 
-/// Displays granular details for a specific inventory item, including POS cart actions and dynamic recent sales history.
+/// Displays granular details for a specific inventory item, including POS cart actions and dynamic, filtered sales history.
 struct ItemProfileView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -48,7 +48,7 @@ struct ItemProfileView: View {
                             .scaledToFill()
                             .frame(width: 150, height: 150)
                             .clipShape(Circle())
-                            .shadow(radius: 5)
+                            .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
                     } else if let urlString = item.imageURL, let url = URL(string: urlString) {
                         AsyncImage(url: url) { phase in
                             if let image = phase.image {
@@ -57,7 +57,7 @@ struct ItemProfileView: View {
                                     .scaledToFill()
                                     .frame(width: 150, height: 150)
                                     .clipShape(Circle())
-                                    .shadow(radius: 5)
+                                    .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
                             } else if phase.error != nil {
                                 ZStack {
                                     Circle().fill(Color.gray.opacity(0.2)).frame(width: 150, height: 150)
@@ -79,7 +79,7 @@ struct ItemProfileView: View {
                                     .font(.system(size: 50))
                                     .foregroundStyle(.gray)
                             )
-                            .shadow(radius: 5)
+                            .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
                     }
                 }
                 .padding(.top, 20)
@@ -125,7 +125,7 @@ struct ItemProfileView: View {
                             .fontWeight(.bold)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 6)
-                            .background(Color.red.opacity(0.2))
+                            .background(Color.red.opacity(0.15))
                             .foregroundStyle(.red)
                             .clipShape(Capsule())
                     } else {
@@ -169,7 +169,7 @@ struct ItemProfileView: View {
                         .padding()
                         .frame(maxWidth: .infinity)
                         .background(Color(uiColor: .secondarySystemBackground))
-                        .cornerRadius(12)
+                        .cornerRadius(16)
                         .padding(.horizontal, 40)
                     } else {
                         Button {
@@ -177,15 +177,18 @@ struct ItemProfileView: View {
                         } label: {
                             VStack {
                                 Image(systemName: "cart.badge.plus")
-                                    .font(.title)
+                                    .font(.title2)
+                                    .fontWeight(.semibold)
                                 Text("Add to Cart")
                                     .font(.caption)
+                                    .fontWeight(.medium)
                             }
                             .frame(maxWidth: .infinity)
-                            .padding()
-                            .background(Color.blue)
+                            .padding(.vertical, 12)
+                            .background(Color.accentColor)
                             .foregroundStyle(.white)
-                            .cornerRadius(12)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .shadow(color: Color.accentColor.opacity(0.3), radius: 8, x: 0, y: 4)
                         }
                         .disabled(item.stockCount <= 0)
                         .padding(.horizontal, 100)
@@ -278,7 +281,7 @@ struct ItemProfileView: View {
 
 // MARK: - Smart Sales History Sub-View
 
-/// Evaluates local storage to display recent transaction history containing the active inventory item.
+/// Evaluates local storage to display a dynamically filtered transaction history utilizing a fluid glass UI.
 struct ItemSalesHistorySection: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Transaction.date, order: .reverse) private var allTransactions: [Transaction]
@@ -286,77 +289,137 @@ struct ItemSalesHistorySection: View {
     let previousCustomerID: UUID?
     let currentItemID: String
     
-    var itemTransactions: [Transaction] {
-        allTransactions.filter { transaction in
+    @State private var selectedTab: OrderFilterTab = .all
+    @State private var orderSearchText = ""
+    
+    var filteredTransactions: [Transaction] {
+        var txs = allTransactions.filter { transaction in
             (transaction.lineItems ?? []).contains { $0.itemID == currentItemID }
         }
+        
+        let now = Date()
+        let calendar = Calendar.current
+        
+        switch selectedTab {
+        case .week:
+            if let start = calendar.dateInterval(of: .weekOfYear, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .month:
+            if let start = calendar.dateInterval(of: .month, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .year:
+            if let start = calendar.dateInterval(of: .year, for: now)?.start {
+                txs = txs.filter { $0.date >= start }
+            }
+        case .all:
+            break
+        }
+        
+        if !orderSearchText.isEmpty {
+            txs = txs.filter { tx in
+                let matchAmount = tx.totalAmount.formatted(.currency(code: "CAD")).contains(orderSearchText)
+                let matchDate = tx.date.formatted(date: .abbreviated, time: .shortened).contains(orderSearchText)
+                let matchCustomer = tx.customer?.fullName.localizedCaseInsensitiveContains(orderSearchText) ?? false
+                let matchWalkIn = "Walk-in".localizedCaseInsensitiveContains(orderSearchText) && tx.customer == nil
+                return matchAmount || matchDate || matchCustomer || matchWalkIn
+            }
+        }
+        
+        return txs.sorted(by: { $0.date > $1.date })
     }
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Recent Sales")
-                .font(.headline)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Sales History")
+                .font(.title3)
+                .fontWeight(.bold)
+                .foregroundStyle(.primary)
                 .padding(.horizontal)
             
-            if itemTransactions.isEmpty {
-                Text("No sales history yet.")
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                    .italic()
-                    .padding(.horizontal)
+            GlassSalesFilterView(selectedTab: $selectedTab, searchText: $orderSearchText)
+                .padding(.horizontal)
+            
+            if filteredTransactions.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "doc.text.magnifyingglass")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.tertiary)
+                    Text("No sales match this criteria.")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 32)
             } else {
-                ForEach(itemTransactions.prefix(5)) { transaction in
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        
-                        HStack {
-                            if let customer = transaction.customer {
-                                if customer.id == previousCustomerID {
-                                    Button {
-                                        dismiss()
-                                    } label: {
-                                        Text(customer.fullName)
-                                            .fontWeight(.semibold)
-                                            .foregroundStyle(.blue)
-                                    }
-                                    .buttonStyle(.plain)
-                                } else {
-                                    NavigationLink(destination: CustomerDetailView(customer: customer)) {
-                                        Text(customer.fullName)
-                                            .fontWeight(.semibold)
-                                            .foregroundStyle(.blue)
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            } else {
-                                Text("Walk-in Customer")
-                                    .fontWeight(.semibold)
-                                    .foregroundStyle(.gray)
-                            }
-                            
-                            Spacer()
-                            
-                            if let payments = transaction.payments {
-                                let methods = Set(payments.map { $0.method }).joined(separator: ", ")
-                                Text(methods)
-                                    .font(.caption)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(Color.primary.opacity(0.1))
-                                    .clipShape(Capsule())
-                            }
-                        }
-                    }
-                    .padding()
-                    .background(Color(uiColor: .secondarySystemBackground))
-                    .cornerRadius(10)
-                    .padding(.horizontal)
+                ForEach(filteredTransactions) { transaction in
+                    transactionCard(for: transaction)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sensoryFeedback(.selection, trigger: selectedTab)
+        .animation(.default, value: filteredTransactions.count)
+    }
+    
+    private func transactionCard(for transaction: Transaction) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 6) {
+                    if let customer = transaction.customer {
+                        if customer.id == previousCustomerID {
+                            Button {
+                                dismiss()
+                            } label: {
+                                Text(customer.fullName)
+                                    .font(.headline)
+                                    .foregroundStyle(.blue)
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            NavigationLink(destination: CustomerDetailView(customer: customer)) {
+                                Text(customer.fullName)
+                                    .font(.headline)
+                                    .foregroundStyle(.blue)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    } else {
+                        Text("Walk-in Customer")
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                    }
+                    
+                    Text(transaction.date.formatted(date: .abbreviated, time: .shortened))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                
+                Spacer()
+                
+                VStack(alignment: .trailing, spacing: 6) {
+                    Text(transaction.totalAmount, format: .currency(code: "CAD"))
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                    
+                    if let payments = transaction.payments {
+                        let methods = Set(payments.map { $0.method }).joined(separator: ", ")
+                        Text(methods)
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(Color.primary.opacity(0.06))
+                            .clipShape(Capsule())
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.03), radius: 6, x: 0, y: 2)
+        .padding(.horizontal)
     }
 }

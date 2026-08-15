@@ -39,6 +39,7 @@ final class AuthenticationViewModel {
     var password = ""
     var fullName = ""
     var errorMessage: String? = nil
+    var successMessage: String? = nil
     var isProcessing = false
     
     /// Validates the current form state based on the active authentication mode.
@@ -58,6 +59,7 @@ final class AuthenticationViewModel {
     func authenticate(session: SessionManager) async {
         isProcessing = true
         errorMessage = nil
+        successMessage = nil
         
         defer {
             isProcessing = false
@@ -71,8 +73,29 @@ final class AuthenticationViewModel {
                 try await provisionNewUser(uid: result.user.uid)
             }
             
-            // Re-added the await keyword as required by the compiler.
             await session.checkAuthenticationState()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+    
+    /// Dispatches a native Firebase password reset email.
+    func sendPasswordReset(for resetEmail: String) async {
+        let trimmedEmail = resetEmail.trimmingCharacters(in: .whitespaces)
+        guard trimmedEmail.isValidEmail else {
+            errorMessage = "Please enter a valid email address to reset your password."
+            return
+        }
+        
+        isProcessing = true
+        errorMessage = nil
+        successMessage = nil
+        
+        defer { isProcessing = false }
+        
+        do {
+            try await Auth.auth().sendPasswordReset(withEmail: trimmedEmail)
+            successMessage = "A password reset link has been sent to \(trimmedEmail)."
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -89,8 +112,7 @@ final class AuthenticationViewModel {
             isSystemAdmin: false,
             storeIds: [],
             storeRoles: [:],
-            activeStoreId: nil,
-            autoJoinStoreId: nil
+            activeStoreId: nil
         )
         
         let db = Firestore.firestore()
@@ -98,11 +120,12 @@ final class AuthenticationViewModel {
         try await db.collection("users").document(uid).setData(userData)
     }
     
-    /// Toggles between login and registration modes, clearing any transient errors.
+    /// Toggles between login and registration modes, clearing any transient errors and messages.
     func toggleMode() {
         withAnimation(.snappy) {
             mode = mode == .login ? .register : .login
             errorMessage = nil
+            successMessage = nil
         }
     }
 }
@@ -113,6 +136,9 @@ final class AuthenticationViewModel {
 struct AuthenticationView: View {
     @Environment(SessionManager.self) private var session
     @State private var viewModel = AuthenticationViewModel()
+    
+    @State private var isShowingForgotPasswordAlert = false
+    @State private var forgotPasswordEmail = ""
     
     var body: some View {
         NavigationStack {
@@ -126,6 +152,21 @@ struct AuthenticationView: View {
             }
             .scrollDismissesKeyboard(.interactively)
             .background(Color(uiColor: .systemBackground))
+            .alert("Reset Password", isPresented: $isShowingForgotPasswordAlert) {
+                TextField("Email Address", text: $forgotPasswordEmail)
+                    .keyboardType(.emailAddress)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                
+                Button("Cancel", role: .cancel) { }
+                Button("Send Link") {
+                    Task {
+                        await viewModel.sendPasswordReset(for: forgotPasswordEmail)
+                    }
+                }
+            } message: {
+                Text("Enter your email address to receive a password reset link.")
+            }
         }
     }
     
@@ -166,10 +207,30 @@ struct AuthenticationView: View {
                 .textContentType(viewModel.mode == .login ? .password : .newPassword)
                 .modifier(AuthFieldModifier())
             
+            if viewModel.mode == .login {
+                HStack {
+                    Spacer()
+                    Button("Forgot Password?") {
+                        forgotPasswordEmail = viewModel.email
+                        isShowingForgotPasswordAlert = true
+                    }
+                    .font(.footnote)
+                    .foregroundStyle(Color.accentColor)
+                }
+            }
+            
             if let errorMessage = viewModel.errorMessage {
                 Text(errorMessage)
                     .font(.caption)
                     .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+                    .transition(.opacity)
+            }
+            
+            if let successMessage = viewModel.successMessage {
+                Text(successMessage)
+                    .font(.caption)
+                    .foregroundStyle(.green)
                     .multilineTextAlignment(.center)
                     .transition(.opacity)
             }

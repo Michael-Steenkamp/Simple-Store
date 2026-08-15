@@ -68,12 +68,11 @@ final class CartCheckoutViewModel {
         session: SessionManager,
         syncManager: SyncManager,
         cartManager: CartManager
-    ) async {
+    ) {
         let finalCustomer = buyerType == .customer ? cartManager.selectedCustomer : nil
         let internalBuyerName = buyerType == .employee ? selectedEmployeeBuyer?.name : nil
         let internalBuyerId = buyerType == .employee ? selectedEmployeeBuyer?.id.uuidString : nil
         
-        // Safely unwrap the store ID to satisfy the strict non-optional requirement
         let storeId = session.currentUser?.activeStoreId ?? ""
         
         let newTransaction = Transaction(
@@ -116,8 +115,8 @@ final class CartCheckoutViewModel {
         
         try? context.save()
         
-        for item in modifiedItems { await syncManager.pushItemToCloud(item) }
-        await syncManager.pushTransactionToCloud(newTransaction)
+        for item in modifiedItems { syncManager.pushItemToCloud(item) }
+        syncManager.pushTransactionToCloud(newTransaction)
         
         if let email = cartManager.selectedCustomer?.email, !email.trimmingCharacters(in: .whitespaces).isEmpty {
             UIPasteboard.general.string = email
@@ -380,7 +379,7 @@ struct CartCheckoutView: View {
         } else {
             VStack(spacing: 12) {
                 Button {
-                    Task { await viewModel.processTransaction(context: modelContext, session: session, syncManager: syncManager, cartManager: cartManager) }
+                    viewModel.processTransaction(context: modelContext, session: session, syncManager: syncManager, cartManager: cartManager)
                 } label: {
                     Text("Complete Sale • \(cartManager.totalAmount, format: .currency(code: "CAD"))")
                         .frame(maxWidth: .infinity).font(.headline).padding(.vertical, 14).foregroundStyle(.white)
