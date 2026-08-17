@@ -46,6 +46,14 @@ final class EditCustomerViewModel {
         let cleanedEmail = email.trimmingCharacters(in: .whitespaces).lowercased()
         
         if cleanedEmail != customer.email.lowercased() && !cleanedEmail.isEmpty {
+            let fetchDescriptor = FetchDescriptor<Customer>()
+            if let allLocalCustomers = try? context.fetch(fetchDescriptor) {
+                if allLocalCustomers.contains(where: { $0.email.lowercased() == cleanedEmail && $0.id != customer.id }) {
+                    actionError = "This email is already registered to another local customer."
+                    return false
+                }
+            }
+            
             let emailExists = await session.isEmailRegistered(email: cleanedEmail)
             if emailExists {
                 actionError = "This email is already registered to another user."

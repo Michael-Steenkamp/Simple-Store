@@ -18,13 +18,14 @@ final class OrderListViewModel {
     var isShowingRevertAlert = false
     
     func revertTransaction(transaction: Transaction, allItems: [StoreItem], context: ModelContext, syncManager: SyncManager) {
-        var restoredItems: [StoreItem] = []
+        var itemsToIncrement: [(String, Int)] = []
         
         if let lineItems = transaction.lineItems {
             for lineItem in lineItems {
                 if let storeItem = allItems.first(where: { $0.id.uuidString == lineItem.itemID }) {
                     storeItem.stockCount += lineItem.quantity
-                    restoredItems.append(storeItem)
+                    // Cache the delta intent for the cloud
+                    itemsToIncrement.append((storeItem.id.uuidString, lineItem.quantity))
                 }
             }
         }
@@ -34,8 +35,10 @@ final class OrderListViewModel {
         try? context.save()
         
         syncManager.deleteTransactionFromCloud(txId)
-        for item in restoredItems {
-            syncManager.pushItemToCloud(item)
+        
+        // Push the positive increments to the cloud
+        for (itemId, quantity) in itemsToIncrement {
+            syncManager.updateStockInCloud(itemId: itemId, quantityDelta: quantity)
         }
     }
     

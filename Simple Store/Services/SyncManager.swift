@@ -599,6 +599,12 @@ public final class SyncManager {
         db.collection("tags").document(tag.id.uuidString).setData(data, merge: true)
     }
     
+    public func updateStockInCloud(itemId: String, quantityDelta: Int) {
+        db.collection("inventory").document(itemId).updateData([
+            "stockCount": FieldValue.increment(Int64(quantityDelta))
+        ])
+    }
+    
     public func deleteItemTagFromCloud(_ tagId: String) {
         db.collection("tags").document(tagId).delete()
     }

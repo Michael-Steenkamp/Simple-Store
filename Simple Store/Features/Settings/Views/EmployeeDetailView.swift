@@ -56,8 +56,15 @@ final class EmployeeDetailViewModel {
         actionError = ""
         do {
             let newCustId = try await session.demoteEmployeeToCustomer(employeeName: employee.name)
-            
-            let custDescriptor = FetchDescriptor<Customer>(predicate: #Predicate { $0.id.uuidString == newCustId })
+
+            // 1. Convert the String to a UUID safely outside the predicate
+            guard let targetUUID = UUID(uuidString: newCustId) else {
+                actionError = "Failed to parse new customer UUID."
+                return false
+            }
+
+            // 2. Compare the UUID values directly
+            let custDescriptor = FetchDescriptor<Customer>(predicate: #Predicate { $0.id == targetUUID })
             let targetCustomer = try context.fetch(custDescriptor).first
             
             let userTxs = allTransactions.filter { $0.buyerEmployeeId == employee.id.uuidString }

@@ -55,8 +55,18 @@ final class AddCustomerViewModel {
         let cleanedFirstName = firstName.trimmingCharacters(in: .whitespaces)
         let cleanedLastName = lastName.trimmingCharacters(in: .whitespaces)
         
-        // 1. Prevent CRM duplicates before generating tokens or local records.
+        // Prevent CRM duplicates before generating tokens or local records.
         if !cleanedEmail.isEmpty {
+            // Offline Protection: Check Local SwiftData Context
+            let fetchDescriptor = FetchDescriptor<Customer>()
+            if let allLocalCustomers = try? context.fetch(fetchDescriptor) {
+                if allLocalCustomers.contains(where: { $0.email.lowercased() == cleanedEmail }) {
+                    errorMessage = "This email is already registered to another local customer."
+                    return nil
+                }
+            }
+            
+            // Online Protection: Check Firestore
             let emailExists = await session.isEmailRegistered(email: cleanedEmail)
             if emailExists {
                 errorMessage = "This email is already registered to another user in this store."

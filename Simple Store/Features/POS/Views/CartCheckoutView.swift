@@ -89,7 +89,6 @@ final class CartCheckoutViewModel {
         
         context.insert(newTransaction)
         
-        let modifiedItems = Array(cartManager.items.keys)
         var createdLineItems: [LineItem] = []
         
         for (item, quantity) in cartManager.items {
@@ -115,7 +114,9 @@ final class CartCheckoutViewModel {
         
         try? context.save()
         
-        for item in modifiedItems { syncManager.pushItemToCloud(item) }
+        for (item, quantity) in cartManager.items {
+            syncManager.updateStockInCloud(itemId: item.id.uuidString, quantityDelta: -quantity)
+        }
         syncManager.pushTransactionToCloud(newTransaction)
         
         if let email = cartManager.selectedCustomer?.email, !email.trimmingCharacters(in: .whitespaces).isEmpty {

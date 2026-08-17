@@ -110,24 +110,40 @@ final class SessionManager {
                 "activeStoreId": storeId
             ])
             
-            let newRecordId = UUID().uuidString
-            let userName = currentUser?.name ?? "Unknown User"
-            let nameParts = userName.components(separatedBy: " ")
-            let first = nameParts.first ?? "Unknown"
-            let last = nameParts.dropFirst().joined(separator: " ")
+            let userEmail = currentUser?.email ?? ""
+            var customerAlreadyExists = false
             
-            let custData: [String: Any] = [
-                "id": newRecordId,
-                "storeId": storeId,
-                "firstName": first,
-                "lastName": last,
-                "email": currentUser?.email ?? "",
-                "phone": "",
-                "isActive": true,
-                "updatedAt": Timestamp(),
-                "dateAdded": Timestamp()
-            ]
-            try await db.collection("customers").document(newRecordId).setData(custData)
+            if !userEmail.isEmpty {
+                let custQuery = try await db.collection("customers")
+                    .whereField("storeId", isEqualTo: storeId)
+                    .whereField("email", isEqualTo: userEmail)
+                    .getDocuments()
+                
+                if !custQuery.isEmpty {
+                    customerAlreadyExists = true
+                }
+            }
+            
+            if !customerAlreadyExists {
+                let newRecordId = UUID().uuidString
+                let userName = currentUser?.name ?? "Unknown User"
+                let nameParts = userName.components(separatedBy: " ")
+                let first = nameParts.first ?? "Unknown"
+                let last = nameParts.dropFirst().joined(separator: " ")
+                
+                let custData: [String: Any] = [
+                    "id": newRecordId,
+                    "storeId": storeId,
+                    "firstName": first,
+                    "lastName": last,
+                    "email": userEmail,
+                    "phone": "",
+                    "isActive": true,
+                    "updatedAt": Timestamp(),
+                    "dateAdded": Timestamp()
+                ]
+                try await db.collection("customers").document(newRecordId).setData(custData)
+            }
             
             if var updatedUser = currentUser {
                 updatedUser.storeIds.append(storeId)
