@@ -23,6 +23,9 @@ struct LaunchRouterView: View {
     
     var body: some View {
         ZStack {
+            ToastOverlayView()
+                .zIndex(10)
+            
             // MARK: - Main Application Content
             if let user = session.currentUser {
                 if user.activeStoreId == nil {

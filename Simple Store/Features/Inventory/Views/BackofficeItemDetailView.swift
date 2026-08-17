@@ -11,6 +11,8 @@ import UIKit
 struct BackofficeItemDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
     
     let item: StoreItem
     
@@ -113,7 +115,24 @@ struct BackofficeItemDetailView: View {
                 if let amount = Int(restockAmount), amount > 0 {
                     item.stockCount += amount
                     item.updatedAt = Date()
+                    
+                    // Dispatch Persistent Audit Log
+                    if let storeId = session.currentUser?.activeStoreId {
+                        let log = ActivityLog(
+                            storeId: storeId,
+                            title: "Restocked \(amount) units of \(item.name)",
+                            category: "Inventory",
+                            isRead: true,
+                            targetRoles: ["admin", "employee", "customer"]
+                        )
+                        modelContext.insert(log)
+                        syncManager.pushActivityToCloud(log)
+                    }
+                    
                     try? modelContext.save()
+                    
+                    // Dispatch Ephemeral UI Toast
+                    ToastManager.shared.show(message: "Inventory updated", style: .success)
                 }
             }
         } message: {

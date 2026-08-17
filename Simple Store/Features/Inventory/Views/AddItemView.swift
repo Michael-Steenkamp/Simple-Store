@@ -72,6 +72,19 @@ final class AddItemViewModel {
                 
                 newItem.imageURL = uploadedURL
                 try? context.save()
+                
+                let log = ActivityLog(
+                    storeId: storeId,
+                    title: "New Item Added: \(newItem.name)",
+                    category: "Inventory",
+                    isRead: true,
+                    targetRoles: ["admin", "employee", "customer"]
+                )
+                context.insert(log)
+                syncManager.pushActivityToCloud(log)
+
+                ToastManager.shared.show(message: "Item created", style: .success)
+                
                 syncManager.pushItemToCloud(newItem)
             }
         } else {

@@ -6,6 +6,7 @@
 import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
+import SwiftData
 
 // MARK: - View Models
 
@@ -26,6 +27,7 @@ final class UserProfileViewModel {
     var isShowingSignOutAlert = false
     var isShowingDeleteAccountAlert = false
     var isShowingDeleteStoreAlert = false
+    var isShowingLeaveStoreAlert = false
     var storeNameConfirmation = ""
     
     var isShowingMyStores = false
@@ -103,13 +105,28 @@ final class UserProfileViewModel {
         }
     }
     
-    func signOut(session: SessionManager) async -> Bool {
+    func leaveCurrentStore(session: SessionManager) async -> Bool {
+        guard let storeId = session.currentUser?.activeStoreId else { return false }
+        await session.leaveStore(storeId: storeId)
+        if session.errorMessage == nil {
+            return true
+        } else {
+            errorMessage = session.errorMessage ?? "Failed to leave workspace."
+            return false
+        }
+    }
+    
+    /// Executes a hard wipe of the local SwiftData environment upon sign-out to prevent context leakage across user profiles.
+    func signOut(session: SessionManager, syncManager: SyncManager, context: ModelContext) async -> Bool {
         do {
+            syncManager.stopAllListeners()
+            syncManager.clearLocalDatabase(context: context)
+            
             try Auth.auth().signOut()
             await session.checkAuthenticationState()
             return true
         } catch {
-            print("Error signing out: \(error.localizedDescription)")
+            errorMessage = "Error signing out: \(error.localizedDescription)"
             return false
         }
     }
@@ -120,8 +137,11 @@ final class UserProfileViewModel {
 /// An interface for managing user credentials, app affiliations, and active workspace toggling.
 struct UserProfileView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
     @Environment(SessionManager.self) private var session
+    @Environment(SyncManager.self) private var syncManager
     
+    @AppStorage("storeName") private var currentStoreName: String = ""
     @State private var viewModel = UserProfileViewModel()
     
     private var isAdmin: Bool {
@@ -129,116 +149,150 @@ struct UserProfileView: View {
         return user.isSystemAdmin || user.storeRoles[activeStore] == "admin"
     }
     
+    private var hasActiveStore: Bool {
+        session.currentUser?.activeStoreId != nil
+    }
+    
     var body: some View {
-        Form {
-            if !viewModel.isEditing {
-                readOnlyProfileSection
-                storesSection
-                dangerZoneSection
-                
-                Section {
-                    Button(role: .destructive) {
-                        viewModel.isShowingSignOutAlert = true
-                    } label: {
-                        Text("Sign Out").frame(maxWidth: .infinity, alignment: .center)
+        NavigationStack {
+            Form {
+                if !viewModel.errorMessage.isEmpty {
+                    Section {
+                        Text(viewModel.errorMessage)
+                            .font(.subheadline)
+                            .foregroundStyle(.red)
                     }
                 }
-            } else {
-                editProfileSection
-            }
-        }
-        .navigationTitle(viewModel.isEditing ? "Edit Profile" : "My Profile")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                if viewModel.isEditing {
-                    Button("Cancel") { withAnimation { viewModel.isEditing = false } }
-                }
-            }
-            
-            ToolbarItem(placement: .confirmationAction) {
-                if viewModel.isEditing {
-                    Button("Save") {
-                        Task {
-                            await viewModel.updateProfile(session: session)
+                
+                if !viewModel.isEditing {
+                    readOnlyProfileSection
+                    storesSection
+                    dangerZoneSection
+                    
+                    Section {
+                        Button(role: .destructive) {
+                            viewModel.isShowingSignOutAlert = true
+                        } label: {
+                            Text("Sign Out").frame(maxWidth: .infinity, alignment: .center)
                         }
                     }
-                    .disabled(viewModel.isProcessing || (viewModel.editName.isEmpty && viewModel.editEmail.isEmpty && viewModel.newPassword.isEmpty && viewModel.editPhone.isEmpty))
                 } else {
-                    Button {
-                        withAnimation { viewModel.isEditing = true }
-                    } label: {
-                        Image(systemName: "pencil.circle.fill")
-                            .font(.title3)
-                            .foregroundStyle(.blue)
+                    editProfileSection
+                }
+            }
+            .navigationTitle(viewModel.isEditing ? "Edit Profile" : "My Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    if viewModel.isEditing {
+                        Button("Cancel") { withAnimation { viewModel.isEditing = false } }
+                    } else {
+                        Button("Close") { dismiss() }
+                    }
+                }
+                
+                ToolbarItem(placement: .confirmationAction) {
+                    if viewModel.isEditing {
+                        Button("Save") {
+                            Task {
+                                await viewModel.updateProfile(session: session)
+                            }
+                        }
+                        .disabled(viewModel.isProcessing || (viewModel.editName.isEmpty && viewModel.editEmail.isEmpty && viewModel.newPassword.isEmpty && viewModel.editPhone.isEmpty))
+                    } else {
+                        Button {
+                            withAnimation { viewModel.isEditing = true }
+                        } label: {
+                            Image(systemName: "pencil.circle.fill")
+                                .font(.title3)
+                                .foregroundStyle(.blue)
+                        }
                     }
                 }
             }
-        }
-        .onAppear {
-            viewModel.populate(from: session.currentUser)
-        }
-        .overlay {
-            if let progress = session.deletionProgress {
-                ZStack {
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .ignoresSafeArea()
-                    
-                    VStack(spacing: 20) {
-                        ProgressView().scaleEffect(1.5)
-                        Text("Deleting Workspace")
-                            .font(.headline)
-                        Text(progress)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
+            .onAppear {
+                viewModel.populate(from: session.currentUser)
+            }
+            .overlay {
+                if let progress = session.deletionProgress {
+                    ZStack {
+                        Rectangle()
+                            .fill(.ultraThinMaterial)
+                            .ignoresSafeArea()
+                        
+                        VStack(spacing: 20) {
+                            ProgressView().scaleEffect(1.5)
+                            Text("Processing Request")
+                                .font(.headline)
+                            Text(progress)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .transition(.opacity)
+                }
+            }
+            .sheet(isPresented: $viewModel.isShowingDiscovery) {
+                StoreSelectionView(isPresentedModally: true)
+            }
+            .sheet(isPresented: $viewModel.isCreatingStore) {
+                StoreSetupWizardView(isPresentedInSheet: true)
+            }
+            .sheet(isPresented: $viewModel.isShowingMyStores) {
+                MyStoresView(isPresentedFromProfile: true)
+            }
+            .alert("Delete Account", isPresented: $viewModel.isShowingDeleteAccountAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Delete", role: .destructive) {
+                    Task {
+                        let success = await viewModel.deleteAccount(session: session)
+                        if success { dismiss() }
                     }
                 }
-                .transition(.opacity)
+            } message: {
+                Text("Are you sure? This archives your directory information and permanently removes your login credentials.")
             }
-        }
-        .sheet(isPresented: $viewModel.isShowingDiscovery) {
-            StoreSelectionView(isPresentedModally: true)
-        }
-        .sheet(isPresented: $viewModel.isCreatingStore) {
-            StoreSetupWizardView(isPresentedInSheet: true)
-        }
-        .sheet(isPresented: $viewModel.isShowingMyStores) {
-            MyStoresView(isPresentedFromProfile: true)
-        }
-        .alert("Delete Account", isPresented: $viewModel.isShowingDeleteAccountAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Delete", role: .destructive) {
-                Task {
-                    let success = await viewModel.deleteAccount(session: session)
-                    if success { dismiss() }
+            .alert("Delete Entire Store?", isPresented: $viewModel.isShowingDeleteStoreAlert) {
+                TextField("Store Name", text: $viewModel.storeNameConfirmation)
+                    .autocorrectionDisabled()
+                    .textInputAutocapitalization(.words)
+                
+                Button("Cancel", role: .cancel) {
+                    viewModel.storeNameConfirmation = ""
                 }
-            }
-        } message: {
-            Text("Are you sure? This archives your directory information and permanently removes your login credentials.")
-        }
-        .alert("Delete Entire Store?", isPresented: $viewModel.isShowingDeleteStoreAlert) {
-            TextField("Type store name to confirm", text: $viewModel.storeNameConfirmation)
-            Button("Cancel", role: .cancel) { viewModel.storeNameConfirmation = "" }
-            Button("Nuke Store", role: .destructive) {
-                Task {
-                    let success = await viewModel.deleteStoreCompletely(session: session)
-                    if success { dismiss() }
+                
+                Button("Delete Store", role: .destructive) {
+                    Task {
+                        let success = await viewModel.deleteStoreCompletely(session: session)
+                        if success { dismiss() }
+                    }
                 }
+                .disabled(viewModel.storeNameConfirmation != currentStoreName)
+            } message: {
+                Text("Type \"\(currentStoreName)\" to confirm deletion. This action is irreversible. All store inventory, orders, customer lists, and staff accounts will be wiped from the database.")
             }
-        } message: {
-            Text("This action is irreversible. All store inventory, orders, customer lists, and staff accounts will be wiped from the database.")
-        }
-        .alert("Sign Out", isPresented: $viewModel.isShowingSignOutAlert) {
-            Button("Cancel", role: .cancel) { }
-            Button("Sign Out", role: .destructive) {
-                Task {
-                    let success = await viewModel.signOut(session: session)
-                    if success { dismiss() }
+            .alert("Leave Store", isPresented: $viewModel.isShowingLeaveStoreAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Leave Workspace", role: .destructive) {
+                    Task {
+                        let success = await viewModel.leaveCurrentStore(session: session)
+                        if success { dismiss() }
+                    }
                 }
+            } message: {
+                Text("Are you sure you want to leave this store? You will lose access to its inventory and data.")
             }
-        } message: {
-            Text("Are you sure you want to sign out?")
+            .alert("Sign Out", isPresented: $viewModel.isShowingSignOutAlert) {
+                Button("Cancel", role: .cancel) { }
+                Button("Sign Out", role: .destructive) {
+                    Task {
+                        let success = await viewModel.signOut(session: session, syncManager: syncManager, context: modelContext)
+                        if success { dismiss() }
+                    }
+                }
+            } message: {
+                Text("Are you sure you want to sign out?")
+            }
         }
     }
     
@@ -270,15 +324,17 @@ struct UserProfileView: View {
                 }
             }
             
-            HStack {
-                Text("Active Role")
-                Spacer()
-                let roleString = session.currentUser?.role?.rawValue.capitalized ?? "Browsing"
-                Text(roleString)
-                    .fontWeight(.bold)
-                    .padding(.horizontal, 10).padding(.vertical, 4)
-                    .background(Color.blue.opacity(0.15)).foregroundStyle(.blue)
-                    .clipShape(Capsule())
+            if hasActiveStore {
+                HStack {
+                    Text("Active Role")
+                    Spacer()
+                    let roleString = session.currentUser?.role?.rawValue.capitalized ?? "Browsing"
+                    Text(roleString)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Color.blue.opacity(0.15)).foregroundStyle(.blue)
+                        .clipShape(Capsule())
+                }
             }
         }
     }
@@ -310,11 +366,20 @@ struct UserProfileView: View {
                 Text("Delete Account").frame(maxWidth: .infinity, alignment: .center)
             }
             
-            if isAdmin {
-                Button(role: .destructive) {
-                    viewModel.isShowingDeleteStoreAlert = true
-                } label: {
-                    Text("Delete Active Store Permanently").frame(maxWidth: .infinity, alignment: .center)
+            if hasActiveStore {
+                if isAdmin {
+                    Button(role: .destructive) {
+                        viewModel.storeNameConfirmation = ""
+                        viewModel.isShowingDeleteStoreAlert = true
+                    } label: {
+                        Text("Delete Active Store Permanently").frame(maxWidth: .infinity, alignment: .center)
+                    }
+                } else {
+                    Button(role: .destructive) {
+                        viewModel.isShowingLeaveStoreAlert = true
+                    } label: {
+                        Text("Leave Current Store").frame(maxWidth: .infinity, alignment: .center)
+                    }
                 }
             }
         }
@@ -330,7 +395,6 @@ struct UserProfileView: View {
             TextField("Update Phone", text: $viewModel.editPhone).keyboardType(.phonePad)
             SecureField("New Password (Optional)", text: $viewModel.newPassword).textContentType(.newPassword)
             
-            if !viewModel.errorMessage.isEmpty { Text(viewModel.errorMessage).font(.caption).foregroundStyle(.red) }
             if !viewModel.successMessage.isEmpty { Text(viewModel.successMessage).font(.caption).foregroundStyle(.green) }
         }
     }

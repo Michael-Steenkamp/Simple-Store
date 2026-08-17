@@ -109,7 +109,7 @@ final class EditCustomerViewModel {
         syncManager.pushCustomerToCloud(customer)
     }
     
-    func mergeCustomer(into targetCustomer: Customer, context: ModelContext, syncManager: SyncManager) {
+    func mergeCustomer(into targetCustomer: Customer, context: ModelContext, syncManager: SyncManager, session: SessionManager) {
         if let transactions = customer.transactions {
             let txsToUpdate = Array(transactions)
             for tx in txsToUpdate {
@@ -124,6 +124,20 @@ final class EditCustomerViewModel {
             targetCustomer.updatedAt = Date()
             syncManager.pushCustomerToCloud(targetCustomer)
         }
+        
+        if let storeId = session.currentUser?.activeStoreId {
+            let log = ActivityLog(
+                storeId: storeId,
+                title: "Merged Customer: \(customer.fullName) into \(targetCustomer.fullName)",
+                category: "CRM",
+                isRead: true,
+                targetRoles: ["admin"]
+            )
+            context.insert(log)
+            syncManager.pushActivityToCloud(log)
+        }
+        
+        ToastManager.shared.show(message: "Customer profiles merged", style: .success)
         
         let oldId = customer.id.uuidString
         context.delete(customer)
@@ -206,7 +220,7 @@ struct EditCustomerView: View {
             }
             .sheet(isPresented: $isShowingMergeSheet) {
                 MergeCustomerSelectionView(sourceCustomer: viewModel.customer, allCustomers: allCustomers) { targetCustomer in
-                    viewModel.mergeCustomer(into: targetCustomer, context: modelContext, syncManager: syncManager)
+                    viewModel.mergeCustomer(into: targetCustomer, context: modelContext, syncManager: syncManager, session: session)
                     dismiss()
                     onDelete?()
                 }

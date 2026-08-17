@@ -4,9 +4,10 @@
 //
 
 import SwiftUI
+import SwiftData
 
 /// A compact, stylized visual representation of an inventory item.
-/// Supports asynchronous image loading from Firebase Storage when local caching is unavailable.
+/// Actively bypasses transient caches, intercepting remote URLs to populate permanent local binary storage for offline POS continuity.
 struct ItemCardView: View {
     let item: StoreItem
     
@@ -21,29 +22,14 @@ struct ItemCardView: View {
                         .scaledToFill()
                         .frame(height: 110)
                         .clipped()
-                } else if let urlString = item.imageURL, let url = URL(string: urlString) {
-                    AsyncImage(url: url) { phase in
-                        if let image = phase.image {
-                            image
-                                .resizable()
-                                .scaledToFill()
-                                .frame(height: 110)
-                                .clipped()
-                        } else if phase.error != nil {
-                            Color(uiColor: .secondarySystemBackground)
-                                .frame(height: 110)
-                                .overlay(
-                                    Image(systemName: "photo.badge.exclamationmark")
-                                        .foregroundStyle(.gray.opacity(0.5))
-                                )
-                                .clipped()
-                        } else {
-                            Color(uiColor: .secondarySystemBackground)
-                                .frame(height: 110)
-                                .overlay(ProgressView())
-                                .clipped()
+                } else if let urlString = item.imageURL, URL(string: urlString) != nil, urlString != "OFFLINE_CACHE" {
+                    Color(uiColor: .secondarySystemBackground)
+                        .frame(height: 110)
+                        .overlay(ProgressView())
+                        .clipped()
+                        .task(id: urlString) {
+                            await cacheImage(from: urlString)
                         }
-                    }
                 } else {
                     Color(uiColor: .secondarySystemBackground)
                         .frame(height: 110)
@@ -52,6 +38,7 @@ struct ItemCardView: View {
                                 .font(.title)
                                 .foregroundStyle(.gray.opacity(0.5))
                         )
+                        .clipped()
                 }
                 
                 if item.stockCount <= 0 {
@@ -95,5 +82,26 @@ struct ItemCardView: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(Color.primary.opacity(0.05), lineWidth: 1)
         )
+    }
+    
+    /// Converts a remote storage URL into local SwiftData binary storage and securely persists the context.
+    private func cacheImage(from urlString: String) async {
+        guard item.imageData == nil, let url = URL(string: urlString) else { return }
+        
+        do {
+            let request = URLRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                if UIImage(data: data) != nil {
+                    await MainActor.run {
+                        item.imageData = data
+                        try? item.modelContext?.save()
+                    }
+                }
+            }
+        } catch {
+            // Degrades gracefully, allowing the user to try again on the next view instantiation.
+        }
     }
 }

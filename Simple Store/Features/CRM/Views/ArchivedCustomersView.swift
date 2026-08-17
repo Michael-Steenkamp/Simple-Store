@@ -10,6 +10,8 @@ import SwiftData
 struct ArchivedCustomersView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(SyncManager.self) private var syncManager
+    @Environment(SessionManager.self) private var session
+    
     @Query(sort: \Customer.lastName) private var allCustomers: [Customer]
     
     /// Filters out customers that have been permanently anonymized/scrubbed.
@@ -58,7 +60,7 @@ struct ArchivedCustomersView: View {
         }
         .swipeActions(edge: .trailing) {
             Button(role: .destructive) {
-                withAnimation { permanentlyDelete(customer) }
+                withAnimation { permanentlyDelete(customer, session: session) }
             } label: {
                 Label("Delete Forever", systemImage: "trash")
             }
@@ -71,7 +73,7 @@ struct ArchivedCustomersView: View {
             }
             
             Button(role: .destructive) {
-                withAnimation { permanentlyDelete(customer) }
+                withAnimation { permanentlyDelete(customer, session: session) }
             } label: {
                 Label("Delete Forever", systemImage: "trash")
             }
@@ -90,28 +92,40 @@ struct ArchivedCustomersView: View {
     /// Intelligently purges the customer record.
     /// If no transactions exist, the entity is hard-deleted from all databases.
     /// If transactions exist, PII is scrubbed to preserve the financial ledger.
-    private func permanentlyDelete(_ customer: Customer) {
-        let hasTransactions = !(customer.transactions ?? []).isEmpty
-        
-        if hasTransactions {
-            // Anonymize to preserve ledger
-            customer.firstName = "Deleted"
-            customer.lastName = "Customer"
-            customer.email = ""
-            customer.phone = ""
-            customer.notes = ""
-            customer.status = nil
-            customer.isActive = false
-            customer.updatedAt = Date()
+        private func permanentlyDelete(_ customer: Customer, session: SessionManager) {
+            let hasTransactions = !(customer.transactions ?? []).isEmpty
+            let originalName = customer.fullName
             
-            try? modelContext.save()
-            syncManager.pushCustomerToCloud(customer)
-        } else {
-            // Safe to completely hard-delete
-            let customerId = customer.id.uuidString
-            modelContext.delete(customer)
-            try? modelContext.save()
-            syncManager.deleteCustomerFromCloud(customerId)
+            if hasTransactions {
+                customer.firstName = "Deleted"
+                customer.lastName = "Customer"
+                customer.email = ""
+                customer.phone = ""
+                customer.notes = ""
+                customer.status = nil
+                customer.isActive = false
+                customer.updatedAt = Date()
+                
+                try? modelContext.save()
+                syncManager.pushCustomerToCloud(customer)
+            } else {
+                let customerId = customer.id.uuidString
+                modelContext.delete(customer)
+                try? modelContext.save()
+                syncManager.deleteCustomerFromCloud(customerId)
+            }
+            
+            if let storeId = session.currentUser?.activeStoreId {
+                let log = ActivityLog(
+                    storeId: storeId,
+                    title: hasTransactions ? "Anonymized Customer: \(originalName)" : "Deleted Customer: \(originalName)",
+                    category: "CRM",
+                    isRead: true,
+                    targetRoles: ["admin"]
+                )
+                modelContext.insert(log)
+                syncManager.pushActivityToCloud(log)
+                ToastManager.shared.show(message: hasTransactions ? "Customer anonymized" : "Customer permanently deleted", style: .info)
+            }
         }
-    }
 }

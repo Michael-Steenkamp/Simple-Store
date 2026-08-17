@@ -143,6 +143,20 @@ final class SessionManager {
                     "dateAdded": Timestamp()
                 ]
                 try await db.collection("customers").document(newRecordId).setData(custData)
+                
+                // Dispatch a strict administrative audit log directly to Firestore
+                let logId = UUID().uuidString
+                let logData: [String: Any] = [
+                    "id": logId,
+                    "storeId": storeId,
+                    "timestamp": FieldValue.serverTimestamp(),
+                    "title": "New Customer Joined: \(first) \(last)",
+                    "category": "CRM",
+                    "count": 1,
+                    "targetRoles": ["admin"],
+                    "targetUserIds": []
+                ]
+                try await db.collection("activities").document(logId).setData(logData)
             }
             
             if var updatedUser = currentUser {
@@ -333,7 +347,7 @@ final class SessionManager {
     }
     
     // MARK: - Account & Store Deletion Rules
-    
+        
     func deleteCurrentAccount() async throws {
         guard let authUser = Auth.auth().currentUser, let appUser = currentUser else { return }
         
@@ -362,65 +376,99 @@ final class SessionManager {
             }
         }
         
-        try await db.collection("users").document(authUser.uid).delete()
-        try await authUser.delete()
-        
-        try? Auth.auth().signOut()
-        currentUser = nil
-        subscriptionManager.isSystemAdmin = false
+        do {
+            try await authUser.delete()
+            try await db.collection("users").document(authUser.uid).delete()
+            
+            try? Auth.auth().signOut()
+            currentUser = nil
+            subscriptionManager.isSystemAdmin = false
+        } catch let error as NSError {
+            if error.domain == AuthErrorDomain && error.code == AuthErrorCode.requiresRecentLogin.rawValue {
+                throw NSError(domain: "SessionManager", code: 400, userInfo: [NSLocalizedDescriptionKey: "For security purposes, Firebase requires you to log out and sign back in immediately before deleting your account."])
+            } else {
+                throw error
+            }
+        }
     }
     
     func deleteStore(storeId: String) async throws {
-        guard let appUser = currentUser, appUser.role == .admin else {
-            throw NSError(domain: "SessionManager", code: 403, userInfo: [NSLocalizedDescriptionKey: "Unauthorized action."])
-        }
-        
-        let database = db
-        
-        deletionProgress = "Purging category /inventory..."
-        let invDocs = try await database.collection("inventory").whereField("storeId", isEqualTo: storeId).getDocuments()
-        for doc in invDocs.documents { try await doc.reference.delete() }
-        
-        deletionProgress = "Purging category /customers..."
-        let custDocs = try await database.collection("customers").whereField("storeId", isEqualTo: storeId).getDocuments()
-        for doc in custDocs.documents { try await doc.reference.delete() }
-        
-        deletionProgress = "Purging category /employees..."
-        let empDocs = try await database.collection("employees").whereField("storeId", isEqualTo: storeId).getDocuments()
-        for doc in empDocs.documents { try await doc.reference.delete() }
-        
-        deletionProgress = "Purging category /transactions..."
-        let txDocs = try await database.collection("transactions").whereField("storeId", isEqualTo: storeId).getDocuments()
-        for doc in txDocs.documents { try await doc.reference.delete() }
-        
-        deletionProgress = "Purging category /tags..."
-        let tagDocs = try await database.collection("tags").whereField("storeId", isEqualTo: storeId).getDocuments()
-        for doc in tagDocs.documents { try await doc.reference.delete() }
-        
-        deletionProgress = "Purging category /customerStatuses..."
-        let statDocs = try await database.collection("customerStatuses").whereField("storeId", isEqualTo: storeId).getDocuments()
-        for doc in statDocs.documents { try await doc.reference.delete() }
-        
-        deletionProgress = "Finalizing workspace teardown..."
-        try await database.collection("stores").document(storeId).delete()
-        
-        if let authUser = Auth.auth().currentUser {
-            try await database.collection("users").document(authUser.uid).updateData([
-                "storeIds": FieldValue.arrayRemove([storeId]),
-                "storeRoles.\(storeId)": FieldValue.delete(),
-                "activeStoreId": FieldValue.delete()
-            ])
+            guard let appUser = currentUser, appUser.role == .admin else {
+                throw NSError(domain: "SessionManager", code: 403, userInfo: [NSLocalizedDescriptionKey: "Unauthorized action."])
+            }
             
+            let database = db
+            var batch = database.batch()
+            var operationCount = 0
+            
+            // Helper block to manage robust, transactional batch chunks
+            func commitBatchIfNecessary(force: Bool = false) async throws {
+                if operationCount >= 500 || (force && operationCount > 0) {
+                    try await batch.commit()
+                    batch = database.batch()
+                    operationCount = 0
+                }
+            }
+            
+            // Helper block targeting global fan-out deletion of a specific workspace subcollection
+            func purgeCollection(name: String) async throws {
+                deletionProgress = "Purging category /\(name)..."
+                let docs = try await database.collection(name).whereField("storeId", isEqualTo: storeId).getDocuments()
+                for doc in docs.documents {
+                    batch.deleteDocument(doc.reference)
+                    operationCount += 1
+                    try await commitBatchIfNecessary()
+                }
+            }
+            
+            try await purgeCollection(name: "activities")
+            try await purgeCollection(name: "inventory")
+            try await purgeCollection(name: "customers")
+            try await purgeCollection(name: "employees")
+            try await purgeCollection(name: "transactions")
+            try await purgeCollection(name: "tags")
+            try await purgeCollection(name: "customerStatuses")
+            
+            deletionProgress = "Unlinking workspace from all users..."
+            let usersQuery = try await database.collection("users").whereField("storeIds", arrayContains: storeId).getDocuments()
+            
+            for doc in usersQuery.documents {
+                let userData = doc.data()
+                var updates: [String: Any] = [
+                    "storeIds": FieldValue.arrayRemove([storeId]),
+                    "storeRoles.\(storeId)": FieldValue.delete()
+                ]
+                
+                // Re-route members currently viewing the deleting workspace context
+                if let activeId = userData["activeStoreId"] as? String, activeId == storeId {
+                    let currentStores = (userData["storeIds"] as? [String] ?? []).filter { $0 != storeId }
+                    if let nextAvailableStore = currentStores.first {
+                        updates["activeStoreId"] = nextAvailableStore
+                    } else {
+                        updates["activeStoreId"] = FieldValue.delete()
+                    }
+                }
+                
+                batch.updateData(updates, forDocument: doc.reference)
+                operationCount += 1
+                try await commitBatchIfNecessary()
+            }
+            
+            deletionProgress = "Finalizing workspace teardown..."
+            batch.deleteDocument(database.collection("stores").document(storeId))
+            operationCount += 1
+            try await commitBatchIfNecessary(force: true)
+            
+            // Finalize state sync directly on the admin machine executing the request
             if var updatedUser = currentUser {
                 updatedUser.storeIds.removeAll(where: { $0 == storeId })
                 updatedUser.storeRoles.removeValue(forKey: storeId)
                 updatedUser.activeStoreId = updatedUser.storeIds.first
                 currentUser = updatedUser
             }
+            
+            deletionProgress = nil
         }
-        
-        deletionProgress = nil
-    }
     
     // MARK: - Role Management Pipelines
     
@@ -456,6 +504,8 @@ final class SessionManager {
         return newEmpId
     }
     
+    // -- MARK: Promote To Admin
+    
     func promoteEmployeeToAdmin(employeeName: String) async throws {
         guard let storeId = currentUser?.activeStoreId, currentUser?.role == .admin else { return }
         
@@ -473,6 +523,8 @@ final class SessionManager {
         ])
     }
     
+    // -- MARK: Fetch Store Admin Names
+    
     func fetchStoreAdminNames() async -> [String] {
         guard let storeId = currentUser?.activeStoreId else { return [] }
         do {
@@ -486,6 +538,8 @@ final class SessionManager {
             return []
         }
     }
+    
+    // -- MARK: Demote Employee
     
     /// Demotes an employee and returns the newly generated Customer ID to facilitate transaction migration.
     func demoteEmployeeToCustomer(employeeName: String) async throws -> String {
@@ -530,7 +584,7 @@ final class SessionManager {
         return newCustId
     }
     
-    // MARK: - Workspace Preferences
+    // -- MARK: Leave Store
     
     func leaveStore(storeId: String) async {
         guard let uid = Auth.auth().currentUser?.uid, let appUser = currentUser else { return }
@@ -557,6 +611,20 @@ final class SessionManager {
                     try await doc.reference.updateData(["isActive": false])
                 }
             }
+            
+            // Dispatch departure log
+            let logId = UUID().uuidString
+            let logData: [String: Any] = [
+                "id": logId,
+                "storeId": storeId,
+                "timestamp": FieldValue.serverTimestamp(),
+                "title": "Workspace Departed: \(appUser.name)",
+                "category": "System",
+                "count": 1,
+                "targetRoles": ["admin"],
+                "targetUserIds": []
+            ]
+            try? await db.collection("activities").document(logId).setData(logData)
             
             if var updatedUser = currentUser {
                 updatedUser.storeIds.removeAll(where: { $0 == storeId })

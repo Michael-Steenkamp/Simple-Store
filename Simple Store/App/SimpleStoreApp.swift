@@ -37,7 +37,8 @@ struct SimpleStoreApp: App {
                 Customer.self,
                 Transaction.self,
                 CustomerStatus.self,
-                Employee.self
+                Employee.self,
+                ActivityLog.self
             )
         } catch {
             fatalError("Failed to initialize SwiftData ModelContainer: \(error.localizedDescription)")

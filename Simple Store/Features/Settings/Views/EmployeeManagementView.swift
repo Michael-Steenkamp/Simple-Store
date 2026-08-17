@@ -15,12 +15,31 @@ final class EmployeeManagementViewModel {
     var isSearchFocused = false
     var adminNames: [String] = []
     
-    func promoteToAdmin(employee: Employee, session: SessionManager) async {
+    func promoteToAdmin(
+        employee: Employee,
+        session: SessionManager,
+        context: ModelContext,
+        syncManager: SyncManager
+    ) async {
         do {
             try await session.promoteEmployeeToAdmin(employeeName: employee.name)
             withAnimation { adminNames.append(employee.name) }
+            
+            if let storeId = session.currentUser?.activeStoreId {
+                let log = ActivityLog(
+                    storeId: storeId,
+                    title: "Promoted \(employee.name) to Administrator",
+                    category: "System",
+                    isRead: true,
+                    targetRoles: ["admin"]
+                )
+                context.insert(log)
+                syncManager.pushActivityToCloud(log)
+                ToastManager.shared.show(message: "\(employee.name) is now an Administrator", style: .success)
+            }
         } catch {
             print(error.localizedDescription)
+            ToastManager.shared.show(message: "Failed to promote employee", style: .error)
         }
     }
 }
@@ -71,9 +90,7 @@ struct EmployeeManagementView: View {
                     if !pinnedAdmins.isEmpty {
                         Section(header: Text("Administrators")) {
                             ForEach(pinnedAdmins) { admin in
-                                NavigationLink(destination: EmployeeDetailView(employee: admin)) {
-                                    EmployeeRowView(employee: admin, isPinnedAdmin: true)
-                                }
+                                adminRow(admin)
                             }
                         }
                     }
@@ -81,19 +98,7 @@ struct EmployeeManagementView: View {
                     if !regularStaff.isEmpty {
                         Section(header: Text("Staff")) {
                             ForEach(regularStaff) { staff in
-                                NavigationLink(destination: EmployeeDetailView(employee: staff)) {
-                                    EmployeeRowView(employee: staff, isPinnedAdmin: false)
-                                }
-                                .swipeActions(edge: .leading) {
-                                    if isAdmin {
-                                        Button {
-                                            Task { await viewModel.promoteToAdmin(employee: staff, session: session) }
-                                        } label: {
-                                            Label("Make Admin", systemImage: "star.fill")
-                                        }
-                                        .tint(.yellow)
-                                    }
-                                }
+                                regularStaffRow(staff)
                             }
                         }
                     }
@@ -104,6 +109,39 @@ struct EmployeeManagementView: View {
         .navigationTitle("Employee Directory")
         .task {
             viewModel.adminNames = await session.fetchStoreAdminNames()
+        }
+    }
+    
+    // MARK: - Extracted Sub-Expressions (Resolves Type-Checker Timeout)
+    
+    @ViewBuilder
+    private func adminRow(_ admin: Employee) -> some View {
+        NavigationLink(destination: EmployeeDetailView(employee: admin)) {
+            EmployeeRowView(employee: admin, isPinnedAdmin: true)
+        }
+    }
+    
+    @ViewBuilder
+    private func regularStaffRow(_ staff: Employee) -> some View {
+        NavigationLink(destination: EmployeeDetailView(employee: staff)) {
+            EmployeeRowView(employee: staff, isPinnedAdmin: false)
+        }
+        .swipeActions(edge: .leading) {
+            if isAdmin {
+                Button {
+                    Task {
+                        await viewModel.promoteToAdmin(
+                            employee: staff,
+                            session: session,
+                            context: modelContext,
+                            syncManager: syncManager
+                        )
+                    }
+                } label: {
+                    Label("Make Admin", systemImage: "star.fill")
+                }
+                .tint(.yellow)
+            }
         }
     }
 }

@@ -96,7 +96,7 @@ struct SettingsTabView: View {
                 )
         }
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItemGroup(placement: .topBarLeading) {
                 Button {
                     isShowingUserProfile = true
                 } label: {
@@ -104,6 +104,8 @@ struct SettingsTabView: View {
                         .font(.title2)
                         .foregroundStyle(Color.accentColor)
                 }
+                
+                NotificationBellView()
             }
             
             ToolbarItem(placement: .topBarTrailing) {

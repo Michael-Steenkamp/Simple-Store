@@ -13,6 +13,8 @@ struct ItemProfileView: View {
     @Environment(CartManager.self) private var cartManager
     @Environment(SessionManager.self) private var session
     
+    let toastLength = 1.5
+    
     let item: StoreItem
     var previousCustomerID: UUID? = nil
     
@@ -49,26 +51,13 @@ struct ItemProfileView: View {
                             .frame(width: 150, height: 150)
                             .clipShape(Circle())
                             .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
-                    } else if let urlString = item.imageURL, let url = URL(string: urlString) {
-                        AsyncImage(url: url) { phase in
-                            if let image = phase.image {
-                                image
-                                    .resizable()
-                                    .scaledToFill()
-                                    .frame(width: 150, height: 150)
-                                    .clipShape(Circle())
-                                    .shadow(color: .black.opacity(0.1), radius: 10, x: 0, y: 5)
-                            } else if phase.error != nil {
-                                ZStack {
-                                    Circle().fill(Color.gray.opacity(0.2)).frame(width: 150, height: 150)
-                                    Image(systemName: "photo.badge.exclamationmark").font(.system(size: 40)).foregroundStyle(.gray)
-                                }
-                            } else {
-                                ZStack {
-                                    Circle().fill(Color.gray.opacity(0.1)).frame(width: 150, height: 150)
-                                    ProgressView()
-                                }
-                            }
+                    } else if let urlString = item.imageURL, URL(string: urlString) != nil, urlString != "OFFLINE_CACHE" {
+                        ZStack {
+                            Circle().fill(Color.gray.opacity(0.1)).frame(width: 150, height: 150)
+                            ProgressView()
+                        }
+                        .task(id: urlString) {
+                            await cacheImage(from: urlString)
                         }
                     } else {
                         Circle()
@@ -174,6 +163,7 @@ struct ItemProfileView: View {
                     } else {
                         Button {
                             cartManager.add(item)
+                            ToastManager.shared.show(message: "\(item.name) added to cart", style: .info, duration: toastLength)
                         } label: {
                             VStack {
                                 Image(systemName: "cart.badge.plus")
@@ -275,6 +265,27 @@ struct ItemProfileView: View {
         }
         .sheet(isPresented: $isShowingCheckoutSheet) {
             CartCheckoutView()
+        }
+    }
+    
+    /// Ingests remote media into local offline storage to guarantee persistence across spotty network connections.
+    private func cacheImage(from urlString: String) async {
+        guard item.imageData == nil, let url = URL(string: urlString) else { return }
+        
+        do {
+            let request = URLRequest(url: url)
+            let (data, response) = try await URLSession.shared.data(for: request)
+            
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 {
+                if UIImage(data: data) != nil {
+                    await MainActor.run {
+                        item.imageData = data
+                        try? item.modelContext?.save()
+                    }
+                }
+            }
+        } catch {
+            // Execution falls back to default error rendering if unavailable
         }
     }
 }

@@ -29,9 +29,10 @@ final class InventoryManagerViewModel {
                 try? context.save()
             }
             syncManager.pushItemToCloud(item)
+            ToastManager.shared.show(message: "\(item.name) archived", style: .info)
         }
     }
-    
+        
     func confirmArchiveAndRemove(cartManager: CartManager, context: ModelContext, syncManager: SyncManager) {
         guard let item = itemToArchiveAlert else { return }
         withAnimation {
@@ -41,6 +42,7 @@ final class InventoryManagerViewModel {
             try? context.save()
         }
         syncManager.pushItemToCloud(item)
+        ToastManager.shared.show(message: "\(item.name) archived and removed from cart", style: .info)
     }
 }
 

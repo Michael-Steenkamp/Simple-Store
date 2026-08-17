@@ -134,7 +134,7 @@ struct StorefrontView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $searchText, isPresented: $isSearchFocused, prompt: "Search name or barcode...")
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) {
+                    ToolbarItemGroup(placement: .topBarLeading) {
                         if isStaff {
                             Button {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
@@ -151,6 +151,8 @@ struct StorefrontView: View {
                                     .font(.title2)
                                     .foregroundStyle(.blue)
                             }
+                            
+                            NotificationBellView()
                         }
                     }
                     
@@ -263,9 +265,10 @@ struct StorefrontView: View {
                     }
                 }
             }
-            .task {
+            .task(id: session.currentUser?.activeStoreId) {
                 if let storeId = session.currentUser?.activeStoreId {
-                    syncManager.startListening(storeId: storeId, context: modelContext)
+                    let activeRole = session.currentUser?.storeRoles[storeId] ?? "customer"
+                    syncManager.startListening(storeId: storeId, role: activeRole, context: modelContext)
                     await fetchStoreProfile(storeId: storeId)
                 }
             }

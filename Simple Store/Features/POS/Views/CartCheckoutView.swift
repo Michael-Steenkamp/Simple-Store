@@ -114,8 +114,36 @@ final class CartCheckoutViewModel {
         
         try? context.save()
         
+        // Dispatch Persistent Audit Log
+        let log = ActivityLog(
+            storeId: storeId,
+            title: "Sale Completed: \(cartManager.totalAmount.formatted(.currency(code: "CAD")))",
+            category: "Sales",
+            isRead: true // Read for the active cashier, unread for remote partners
+        )
+        context.insert(log)
+        syncManager.pushActivityToCloud(log)
+
+        // Dispatch Ephemeral UI Toast
+        ToastManager.shared.show(message: "Transaction Successful", style: .success)
+        
         for (item, quantity) in cartManager.items {
             syncManager.updateStockInCloud(itemId: item.id.uuidString, quantityDelta: -quantity)
+            
+            item.stockCount -= quantity
+
+            // Trigger a warning log if this sale depleted the stock
+            if item.stockCount == 0 {
+                let warningLog = ActivityLog(
+                    storeId: storeId,
+                    title: "Out of Stock: \(item.name)",
+                    category: "Inventory",
+                    isRead: true,
+                    targetRoles: ["admin", "employee"]
+                )
+                context.insert(warningLog)
+                syncManager.pushActivityToCloud(warningLog)
+            }
         }
         syncManager.pushTransactionToCloud(newTransaction)
         

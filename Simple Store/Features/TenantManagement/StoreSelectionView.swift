@@ -25,6 +25,7 @@ final class StoreSelectionViewModel {
     var isLoadingStores = true
     
     var isCreatingStore: Bool = false
+    var isShowingProfile: Bool = false
     var selectedStorePreview: PublicStore?
     
     func filteredStores(myStoreIds: [String]) -> [PublicStore] {
@@ -106,11 +107,20 @@ struct StoreSelectionView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 VStack(spacing: 16) {
-                    Text("Discover Stores")
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    
+                    HStack {
+                        Text("Discover Stores")
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        
+                        Button {
+                            viewModel.isShowingProfile = true
+                        } label: {
+                            Image(systemName: "person.crop.circle")
+                                .font(.title)
+                        }
+                    }
+    
                     TextField("Search by name...", text: $viewModel.searchText)
                         .padding(12)
                         .background(Color(uiColor: .secondarySystemBackground))
@@ -191,6 +201,9 @@ struct StoreSelectionView: View {
                 StorePreviewView(store: store) {
                     dismiss()
                 }
+            }
+            .sheet(isPresented: $viewModel.isShowingProfile) {
+                UserProfileView()
             }
             .task {
                 await viewModel.fetchPublicStores()
